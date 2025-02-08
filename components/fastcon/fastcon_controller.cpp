@@ -142,8 +142,7 @@ namespace esphome
                 0  // 5 - Cold byte
             };
 
-            // TODO: when changing brightness, the vector should only be 1 byte long
-            // TODO: maybe brightness and color commands need to be split into two commands?
+            // TODO: need to figure out when esphome is changing to white vs setting brightness
 
             auto values = state->current_values;
 
@@ -160,7 +159,9 @@ namespace esphome
 
             if (has_white)
             {
-                return std::vector<uint8_t>({light_data[0]});
+                return std::vector<uint8_t>({static_cast<uint8_t>(brightness)});
+                // DEBUG: when changing to white mode, this should be the payload:
+                // ff0000007f7f
             }
 
             bool has_rgb = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::RGB)) != 0;
