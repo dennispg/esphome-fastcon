@@ -19,8 +19,10 @@ namespace esphome
             void setup() override;
             void loop() override;
 
+            std::vector<uint8_t> get_light_data(light::LightState *state);
+            std::vector<uint8_t> single_control(uint32_t addr, const std::vector<uint8_t> &light_data);
+
             void queueCommand(uint32_t light_id_, const std::vector<uint8_t> &data);
-            std::vector<uint8_t> get_advertisement(uint32_t light_id_, bool is_on, float brightness, float red, float green, float blue);
 
             void clear_queue();
             bool is_queue_empty() const
@@ -73,7 +75,6 @@ namespace esphome
 
             // Protocol implementation
             std::vector<uint8_t> generate_command(uint8_t n, uint32_t light_id_, const std::vector<uint8_t> &data, bool forward = true);
-            std::vector<uint8_t> single_control(uint32_t addr, const std::vector<uint8_t> &data);
 
             std::array<uint8_t, 4> mesh_key_{};
 

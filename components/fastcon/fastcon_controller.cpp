@@ -1,5 +1,6 @@
 #include "esphome/core/component_iterator.h"
 #include "esphome/core/log.h"
+#include "esphome/components/light/color_mode.h"
 #include "fastcon_controller.h"
 #include "protocol.h"
 
@@ -130,51 +131,76 @@ namespace esphome
             }
         }
 
-        std::vector<uint8_t> FastconController::get_advertisement(uint32_t light_id_, bool is_on, float brightness, float red, float green, float blue)
+        std::vector<uint8_t> FastconController::get_light_data(light::LightState *state)
         {
-            std::vector<uint8_t> light_data;
+            std::vector<uint8_t> light_data = {
+                0, // 0 - On/Off Bit + 7-bit Brightness
+                0, // 1 - Blue byte
+                0, // 2 - Red byte
+                0, // 3 - Green byte
+                0, // 4 - Warm byte
+                0  // 5 - Cold byte
+            };
 
-            // Convert brightness to 0-127 range
-            uint8_t bright = static_cast<uint8_t>(std::min(brightness * 127.0f, 127.0f));
+            auto values = state->current_values;
 
-            if (!is_on)
+            bool is_on = values.is_on();
+            if (is_on)
             {
-                // Off state
-                light_data = {static_cast<uint8_t>(0)}; // Just the off command
-            }
-            else if (red == 0 && green == 0 && blue == 0)
-            {
-                // Warm white mode
-                light_data = std::vector<uint8_t>{
-                    static_cast<uint8_t>(128 + bright), // On bit (128) + brightness
-                    0, 0, 0,                            // RGB values
-                    127, 127                            // Warm/cold values
-                };
-            }
-            else
-            {
-                // RGB mode
-                uint8_t r = static_cast<uint8_t>(red * 255.0f);
-                uint8_t g = static_cast<uint8_t>(green * 255.0f);
-                uint8_t b = static_cast<uint8_t>(blue * 255.0f);
+                auto color_mode = values.get_color_mode();
+                float brightness = values.get_brightness() * 127.0f;
+                light_data[0] = 0x80 + static_cast<uint8_t>(std::min(brightness, 127.0f));
 
-                light_data = std::vector<uint8_t>{
-                    static_cast<uint8_t>(128 + bright), // On bit (128) + brightness
-                    b, r, g,                            // RGB values (in BRG order per protocol)
-                    0, 0                                // No warm/cold values in RGB mode
-                };
+                bool has_rgb = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::RGB)) != 0;
+                if (has_rgb)
+                {
+                    light_data[1] = static_cast<uint8_t>(values.get_blue() * 255.0f);
+                    light_data[2] = static_cast<uint8_t>(values.get_red() * 255.0f);
+                    light_data[3] = static_cast<uint8_t>(values.get_green() * 255.0f);
+                }
+
+                bool has_cold_warm = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::COLD_WARM_WHITE)) != 0;
+                if (has_cold_warm)
+                {
+                    light_data[4] = static_cast<uint8_t>(values.get_warm_white() * 255.0f);
+                    light_data[5] = static_cast<uint8_t>(values.get_cold_white() * 255.0f);
+                }
+
+                // TODO figure out if we can use these, and how
+                bool has_white = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::WHITE)) != 0;
+                bool has_temp = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::COLOR_TEMPERATURE)) != 0;
+                if (has_temp)
+                {
+                    float temperature = values.get_color_temperature();
+                    if (temperature < 153)
+                    {
+                        light_data[4] = 0xff;
+                        light_data[5] = 0x00;
+                    }
+                    else if (temperature > 500)
+                    {
+                        light_data[4] = 0x00;
+                        light_data[5] = 0xff;
+                    }
+                    else
+                    {
+                        // Linear interpolation between (153, 0xff) and (500, 0x00)
+                        light_data[4] = (uint8_t)(((500 - temperature) * 255.0f + (temperature - 153) * 0x00) / (500 - 153));
+                        light_data[5] = (uint8_t)(((temperature - 153) * 255.0f + (500 - temperature) * 0x00) / (500 - 153));
+                    }
+                }
             }
 
-            return this->single_control(light_id_, light_data);
+            return light_data;
         }
 
-        std::vector<uint8_t> FastconController::single_control(uint32_t light_id_, const std::vector<uint8_t> &data)
+        std::vector<uint8_t> FastconController::single_control(uint32_t light_id_, const std::vector<uint8_t> &light_data)
         {
             std::vector<uint8_t> result_data(12);
 
-            result_data[0] = 2 | (((0xfffffff & (data.size() + 1)) << 4));
+            result_data[0] = 2 | (((0xfffffff & (light_data.size() + 1)) << 4));
             result_data[1] = light_id_;
-            std::copy(data.begin(), data.end(), result_data.begin() + 2);
+            std::copy(light_data.begin(), light_data.end(), result_data.begin() + 2);
 
             return this->generate_command(5, light_id_, result_data, true);
         }
