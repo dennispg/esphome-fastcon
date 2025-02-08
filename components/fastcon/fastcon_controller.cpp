@@ -148,54 +148,56 @@ namespace esphome
             auto values = state->current_values;
 
             bool is_on = values.is_on();
-            if (is_on)
+            if (!is_on)
             {
-                auto color_mode = values.get_color_mode();
-                bool has_white = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::WHITE)) != 0;
-                float brightness = std::min(values.get_brightness() * 127.0f, 127.0f); // clamp the value to at most 127
-                light_data[0] = 0x80 + static_cast<uint8_t>(brightness);
+                return std::vector<uint8_t>({0x00});
+            }
 
-                if (has_white)
+            auto color_mode = values.get_color_mode();
+            bool has_white = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::WHITE)) != 0;
+            float brightness = std::min(values.get_brightness() * 127.0f, 127.0f); // clamp the value to at most 127
+            light_data[0] = 0x80 + static_cast<uint8_t>(brightness);
+
+            if (has_white)
+            {
+                return std::vector<uint8_t>({light_data[0]});
+            }
+
+            bool has_rgb = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::RGB)) != 0;
+            if (has_rgb)
+            {
+                light_data[1] = static_cast<uint8_t>(values.get_blue() * 255.0f);
+                light_data[2] = static_cast<uint8_t>(values.get_red() * 255.0f);
+                light_data[3] = static_cast<uint8_t>(values.get_green() * 255.0f);
+            }
+
+            bool has_cold_warm = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::COLD_WARM_WHITE)) != 0;
+            if (has_cold_warm)
+            {
+                light_data[4] = static_cast<uint8_t>(values.get_warm_white() * 255.0f);
+                light_data[5] = static_cast<uint8_t>(values.get_cold_white() * 255.0f);
+            }
+
+            // TODO figure out if we can use these, and how
+            bool has_temp = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::COLOR_TEMPERATURE)) != 0;
+            if (has_temp)
+            {
+                float temperature = values.get_color_temperature();
+                if (temperature < 153)
                 {
-                    return std::vector<uint8_t>({light_data[0]});
+                    light_data[4] = 0xff;
+                    light_data[5] = 0x00;
                 }
-
-                bool has_rgb = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::RGB)) != 0;
-                if (has_rgb)
+                else if (temperature > 500)
                 {
-                    light_data[1] = static_cast<uint8_t>(values.get_blue() * 255.0f);
-                    light_data[2] = static_cast<uint8_t>(values.get_red() * 255.0f);
-                    light_data[3] = static_cast<uint8_t>(values.get_green() * 255.0f);
+                    light_data[4] = 0x00;
+                    light_data[5] = 0xff;
                 }
-
-                bool has_cold_warm = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::COLD_WARM_WHITE)) != 0;
-                if (has_cold_warm)
+                else
                 {
-                    light_data[4] = static_cast<uint8_t>(values.get_warm_white() * 255.0f);
-                    light_data[5] = static_cast<uint8_t>(values.get_cold_white() * 255.0f);
-                }
-
-                // TODO figure out if we can use these, and how
-                bool has_temp = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::COLOR_TEMPERATURE)) != 0;
-                if (has_temp)
-                {
-                    float temperature = values.get_color_temperature();
-                    if (temperature < 153)
-                    {
-                        light_data[4] = 0xff;
-                        light_data[5] = 0x00;
-                    }
-                    else if (temperature > 500)
-                    {
-                        light_data[4] = 0x00;
-                        light_data[5] = 0xff;
-                    }
-                    else
-                    {
-                        // Linear interpolation between (153, 0xff) and (500, 0x00)
-                        light_data[4] = (uint8_t)(((500 - temperature) * 255.0f + (temperature - 153) * 0x00) / (500 - 153));
-                        light_data[5] = (uint8_t)(((temperature - 153) * 255.0f + (500 - temperature) * 0x00) / (500 - 153));
-                    }
+                    // Linear interpolation between (153, 0xff) and (500, 0x00)
+                    light_data[4] = (uint8_t)(((500 - temperature) * 255.0f + (temperature - 153) * 0x00) / (500 - 153));
+                    light_data[5] = (uint8_t)(((temperature - 153) * 255.0f + (500 - temperature) * 0x00) / (500 - 153));
                 }
             }
 
