@@ -148,8 +148,8 @@ namespace esphome
             if (is_on)
             {
                 auto color_mode = values.get_color_mode();
-                float brightness = values.get_brightness() * 127.0f;
-                light_data[0] = 0x80 + static_cast<uint8_t>(std::min(brightness, 127.0f));
+                float brightness = std::min(values.get_brightness() * 127.0f, 127.0f); // clamp the value to at most 127
+                light_data[0] = 0x80 + static_cast<uint8_t>(brightness);
 
                 bool has_rgb = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::RGB)) != 0;
                 if (has_rgb)
