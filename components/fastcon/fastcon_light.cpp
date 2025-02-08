@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include "fastcon_light.h"
 #include "fastcon_controller.h"
+#include "utils.h"
 
 namespace esphome
 {
@@ -53,12 +54,7 @@ namespace esphome
             auto adv_data = this->controller_->single_control(this->light_id_, light_data);
 
             // Debug output - print payload as hex
-            char hex_str[adv_data.size() * 2 + 1]; // Each byte needs 2 chars + null terminator
-            for (size_t i = 0; i < adv_data.size(); i++)
-            {
-                sprintf(hex_str + (i * 2), "%02X", adv_data[i]);
-            }
-            hex_str[adv_data.size() * 2] = '\0'; // Ensure null termination
+            auto hex_str = vector_to_hex_string(adv_data);
             ESP_LOGD(TAG, "Advertisement Payload (%d bytes): %s", adv_data.size(), hex_str);
 
             // Send the advertisement

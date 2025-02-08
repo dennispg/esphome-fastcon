@@ -142,6 +142,9 @@ namespace esphome
                 0  // 5 - Cold byte
             };
 
+            // TODO: when changing brightness, the vector should only be 1 byte long
+            // TODO: maybe brightness and color commands need to be split into two commands?
+
             auto values = state->current_values;
 
             bool is_on = values.is_on();
@@ -201,6 +204,10 @@ namespace esphome
             result_data[0] = 2 | (((0xfffffff & (light_data.size() + 1)) << 4));
             result_data[1] = light_id_;
             std::copy(light_data.begin(), light_data.end(), result_data.begin() + 2);
+
+            // Debug output - print payload as hex
+            auto hex_str = vector_to_hex_string(result_data);
+            ESP_LOGD(TAG, "Inner Payload (%d bytes): %s", result_data.size(), hex_str);
 
             return this->generate_command(5, light_id_, result_data, true);
         }
