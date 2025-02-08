@@ -41,14 +41,21 @@ namespace esphome
             auto light_data = this->controller_->get_light_data(state);
 
             // Debug output - print the light state values
-            bool is_on = (light_data[0] & 0x80) == 1;
+            bool is_on = (light_data[0] & 0x80) != 0;
             float brightness = ((light_data[0] & 0x7F) / 127.0f) * 100.0f;
-            auto r = light_data[2];
-            auto g = light_data[3];
-            auto b = light_data[1];
-            auto warm = light_data[4];
-            auto cold = light_data[5];
-            ESP_LOGD(TAG, "Writing state: light_id=%d, on=%d, brightness=%.1f%%, rgb=(%d,%d,%d), warm=%d, cold=%d", light_id_, is_on, brightness, r, g, b, warm, cold);
+            if (light_data.size() == 1)
+            {
+                ESP_LOGD(TAG, "Writing state: light_id=%d, on=%d, brightness=%.1f%%", light_id_, is_on, brightness);
+            }
+            else
+            {
+                auto r = light_data[2];
+                auto g = light_data[3];
+                auto b = light_data[1];
+                auto warm = light_data[4];
+                auto cold = light_data[5];
+                ESP_LOGD(TAG, "Writing state: light_id=%d, on=%d, brightness=%.1f%%, rgb=(%d,%d,%d), warm=%d, cold=%d", light_id_, is_on, brightness, r, g, b, warm, cold);
+            }
 
             // Generate the advertisement payload
             auto adv_data = this->controller_->single_control(this->light_id_, light_data);
