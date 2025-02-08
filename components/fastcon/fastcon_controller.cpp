@@ -151,8 +151,15 @@ namespace esphome
             if (is_on)
             {
                 auto color_mode = values.get_color_mode();
+                bool has_white = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::WHITE)) != 0;
                 float brightness = std::min(values.get_brightness() * 127.0f, 127.0f); // clamp the value to at most 127
                 light_data[0] = 0x80 + static_cast<uint8_t>(brightness);
+
+                if (has_white)
+                {
+                    light_data = std::vector<uint8_t>({light_data[0]});
+                    return light_data;
+                }
 
                 bool has_rgb = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::RGB)) != 0;
                 if (has_rgb)
@@ -170,7 +177,6 @@ namespace esphome
                 }
 
                 // TODO figure out if we can use these, and how
-                bool has_white = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::WHITE)) != 0;
                 bool has_temp = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::COLOR_TEMPERATURE)) != 0;
                 if (has_temp)
                 {
