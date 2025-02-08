@@ -157,8 +157,7 @@ namespace esphome
 
                 if (has_white)
                 {
-                    light_data = std::vector<uint8_t>({light_data[0]});
-                    return light_data;
+                    return std::vector<uint8_t>({light_data[0]});
                 }
 
                 bool has_rgb = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::RGB)) != 0;
@@ -212,7 +211,7 @@ namespace esphome
             std::copy(light_data.begin(), light_data.end(), result_data.begin() + 2);
 
             // Debug output - print payload as hex
-            auto hex_str = vector_to_hex_string(result_data);
+            auto hex_str = vector_to_hex_string(result_data).data();
             ESP_LOGD(TAG, "Inner Payload (%d bytes): %s", result_data.size(), hex_str);
 
             return this->generate_command(5, light_id_, result_data, true);
