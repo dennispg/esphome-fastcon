@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "esphome/core/component_iterator.h"
 #include "esphome/core/log.h"
 #include "esphome/components/light/color_mode.h"
@@ -13,27 +14,35 @@ namespace esphome
         void FastconController::queueCommand(uint32_t light_id_, const std::vector<uint8_t> &data)
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
+
+            // Newest command wins. If this light already has a command waiting
+            // (a first send or a repeat), replace it in place and restart its repeat count.
+            for (auto &cmd : queue_)
+            {
+                if (cmd.light_id == light_id_)
+                {
+                    cmd.data = data;
+                    cmd.sends_left = repeat_count_;
+                    ESP_LOGV(TAG, "Replaced pending command for light %u", (unsigned) light_id_);
+                    return;
+                }
+            }
+
             if (queue_.size() >= max_queue_size_)
             {
-                ESP_LOGW(TAG, "Command queue full (size=%d), dropping command for light %d",
-                         queue_.size(), light_id_);
+                ESP_LOGW(TAG, "Command queue full (size=%u), dropping command for light %u",
+                         (unsigned) queue_.size(), (unsigned) light_id_);
                 return;
             }
 
-            Command cmd;
-            cmd.data = data;
-            cmd.timestamp = millis();
-            cmd.retries = 0;
-
-            queue_.push(cmd);
-            ESP_LOGV(TAG, "Command queued, queue size: %d", queue_.size());
+            queue_.push_back(Command{light_id_, data, repeat_count_});
+            ESP_LOGV(TAG, "Command queued, queue size: %u", (unsigned) queue_.size());
         }
 
         void FastconController::clear_queue()
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
-            std::queue<Command> empty;
-            std::swap(queue_, empty);
+            queue_.clear();
         }
 
         void FastconController::setup()
@@ -42,6 +51,7 @@ namespace esphome
             ESP_LOGCONFIG(TAG, "  Advertisement interval: %d-%d", this->adv_interval_min_, this->adv_interval_max_);
             ESP_LOGCONFIG(TAG, "  Advertisement duration: %dms", this->adv_duration_);
             ESP_LOGCONFIG(TAG, "  Advertisement gap: %dms", this->adv_gap_);
+            ESP_LOGCONFIG(TAG, "  Sends per command: %d", this->repeat_count_);
         }
 
         void FastconController::loop()
@@ -57,7 +67,23 @@ namespace esphome
                     return;
 
                 Command cmd = queue_.front();
-                queue_.pop();
+                queue_.pop_front();
+
+                // Send each command repeat_count_ times, round-robin with the other
+                // lights, so a bulb that misses one broadcast catches the next. A repeat is only
+                // re-queued if no newer command for the same light has arrived meanwhile.
+                if (cmd.sends_left > 1)
+                {
+                    bool newer_waiting = std::any_of(queue_.begin(), queue_.end(),
+                                                     [&](const Command &c)
+                                                     { return c.light_id == cmd.light_id; });
+                    if (!newer_waiting)
+                    {
+                        Command again = cmd;
+                        again.sends_left--;
+                        queue_.push_back(again);
+                    }
+                }
 
                 esp_ble_adv_params_t adv_params = {
                     .adv_int_min = adv_interval_min_,
@@ -103,7 +129,7 @@ namespace esphome
 
                 adv_state_ = AdvertiseState::ADVERTISING;
                 state_start_time_ = now;
-                ESP_LOGV(TAG, "Started advertising");
+                ESP_LOGV(TAG, "Started advertising for light %u (%d sends left)", (unsigned) cmd.light_id, cmd.sends_left - 1);
                 break;
             }
 
