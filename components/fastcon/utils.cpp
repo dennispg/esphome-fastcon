@@ -112,14 +112,16 @@ namespace esphome
             }
         }
 
-        std::vector<char> vector_to_hex_string(std::vector<uint8_t> &data)
+        std::string vector_to_hex_string(const std::vector<uint8_t> &data)
         {
-            std::vector<char> hex_str(data.size() * 2 + 1); // Allocate the vector with the required size
-            for (size_t i = 0; i < data.size(); i++)
+            std::string hex_str;
+            hex_str.reserve(data.size() * 2);
+            char buf[3];
+            for (auto byte : data)
             {
-                sprintf(hex_str.data() + (i * 2), "%02X", data[i]);
+                snprintf(buf, sizeof(buf), "%02X", byte);
+                hex_str += buf;
             }
-            hex_str[data.size() * 2] = '\0'; // Ensure null termination
             return hex_str;
         }
     } // namespace fastcon

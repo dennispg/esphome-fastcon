@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace esphome
@@ -31,6 +32,6 @@ namespace esphome
         void whitening_init(uint32_t val, WhiteningContext &ctx);
         void whitening_encode(std::vector<uint8_t> &data, WhiteningContext &ctx);
 
-        std::vector<char> vector_to_hex_string(std::vector<uint8_t> &data);
+        std::string vector_to_hex_string(const std::vector<uint8_t> &data);
     } // namespace fastcon
 } // namespace esphome

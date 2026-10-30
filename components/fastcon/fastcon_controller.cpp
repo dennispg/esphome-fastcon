@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include "esphome/core/component_iterator.h"
 #include "esphome/core/log.h"
 #include "esphome/components/light/color_mode.h"
@@ -142,8 +144,6 @@ namespace esphome
                 0  // 5 - Cold byte
             };
 
-            // TODO: need to figure out when esphome is changing to white vs setting brightness
-
             auto values = state->current_values;
 
             bool is_on = values.is_on();
@@ -152,19 +152,36 @@ namespace esphome
                 return std::vector<uint8_t>({0x00});
             }
 
-            auto color_mode = values.get_color_mode();
-            bool has_white = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::WHITE)) != 0;
-            float brightness = std::min(values.get_brightness() * 127.0f, 127.0f); // clamp the value to at most 127
-            light_data[0] = 0x80 + static_cast<uint8_t>(brightness);
+            // At least 1, so "on" never goes out as brightness 0
+            const int brightness = std::clamp(static_cast<int>(std::lround(values.get_brightness() * 127.0f)), 1, 127);
+            const uint8_t on_brightness = 0x80 | static_cast<uint8_t>(brightness);
+            light_data[0] = on_brightness;
 
-            if (has_white)
+            auto color_mode = values.get_color_mode();
+            auto has = [&](light::ColorCapability cap)
+            { return (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(cap)) != 0; };
+            const bool has_rgb = has(light::ColorCapability::RGB);
+            const bool has_cold_warm = has(light::ColorCapability::COLD_WARM_WHITE);
+            const bool has_temp = has(light::ColorCapability::COLOR_TEMPERATURE);
+            const bool has_white = has(light::ColorCapability::WHITE);
+
+            if (!has_rgb && !has_cold_warm && !has_temp)
             {
-                return std::vector<uint8_t>({static_cast<uint8_t>(brightness)});
-                // DEBUG: when changing to white mode, this should be the payload:
-                // ff0000007f7f
+                if (has_white)
+                {
+                    // White mode switches the bulb to its white LEDs. This is the
+                    // payload noted in the original TODO, captured from the app (ff0000007f7f), at the requested brightness.
+                    // (Sending only the brightness byte, without the "on" bit, would leave the bulb off.)
+                    light_data[4] = 0x7f;
+                    light_data[5] = 0x7f;
+                    return light_data;
+                }
+                // No colour chosen yet (e.g. a plain "turn on" after the controller
+                // restarted). Send the short "on + brightness" command so the bulb keeps its own
+                // last colour. Sending every colour channel as 0 here would light the bulb "black".
+                return std::vector<uint8_t>({on_brightness});
             }
 
-            bool has_rgb = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::RGB)) != 0;
             if (has_rgb)
             {
                 light_data[1] = static_cast<uint8_t>(values.get_blue() * 255.0f);
@@ -172,15 +189,12 @@ namespace esphome
                 light_data[3] = static_cast<uint8_t>(values.get_green() * 255.0f);
             }
 
-            bool has_cold_warm = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::COLD_WARM_WHITE)) != 0;
             if (has_cold_warm)
             {
                 light_data[4] = static_cast<uint8_t>(values.get_warm_white() * 255.0f);
                 light_data[5] = static_cast<uint8_t>(values.get_cold_white() * 255.0f);
             }
 
-            // TODO figure out if we can use these, and how
-            bool has_temp = (static_cast<uint8_t>(color_mode) & static_cast<uint8_t>(light::ColorCapability::COLOR_TEMPERATURE)) != 0;
             if (has_temp)
             {
                 float temperature = values.get_color_temperature();
@@ -213,9 +227,8 @@ namespace esphome
             result_data[1] = light_id_;
             std::copy(light_data.begin(), light_data.end(), result_data.begin() + 2);
 
-            // Debug output - print payload as hex
-            auto hex_str = vector_to_hex_string(result_data).data();
-            ESP_LOGD(TAG, "Inner Payload (%d bytes): %s", result_data.size(), hex_str);
+            // Verbose only; the string must stay alive while it's logged
+            ESP_LOGV(TAG, "Inner Payload (%u bytes): %s", (unsigned) result_data.size(), vector_to_hex_string(result_data).c_str());
 
             return this->generate_command(5, light_id_, result_data, true);
         }
