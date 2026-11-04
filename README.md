@@ -1,13 +1,15 @@
 # ESPHome Fastcon BLE Light Component
 
+[![Compile](https://github.com/dennispg/esphome-fastcon/actions/workflows/compile.yml/badge.svg)](https://github.com/dennispg/esphome-fastcon/actions/workflows/compile.yml)
+
 This is a custom component for ESPHome that allows you to control Broadlink Fastcon BLE lights, also known as brMesh. It should work with any light that can be controlled by brMesh or Broadlink BLE mobile apps.
 
 Be warned - there is also a brLight app, which might look like brMesh, but the protocol is different.
 
 ## Requirements
 
-- ESP32 board
-- ESPHome 2023.12.0 or newer
+- ESP32 board (`arduino` or `esp-idf` framework)
+- ESPHome 2023.12.0 or newer (CI compiles against the latest stable and beta releases every week)
 
 ## Supported Features
 
@@ -30,9 +32,9 @@ esp32:
 esp32_ble_tracker:
 esp32_ble_server:
 
-# Source configuration
+# Source configuration (pinned to a release; use @main for the latest unreleased changes)
 external_components:
-  - source: github://dennispg/esphome-fastcon@main
+  - source: github://dennispg/esphome-fastcon@v1.1.0
 
 # Controller configuration
 fastcon:
