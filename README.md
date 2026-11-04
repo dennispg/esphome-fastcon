@@ -39,7 +39,7 @@ esp32_ble_server:
 
 # Source configuration (pinned to a release; use @main for the latest unreleased changes)
 external_components:
-  - source: github://dennispg/esphome-fastcon@v1.1.0
+  - source: github://dennispg/esphome-fastcon@v1.1.1
 
 # Controller configuration
 fastcon:
