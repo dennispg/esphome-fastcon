@@ -1,0 +1,43 @@
+name: Compile
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Weekly, so breaking changes in new ESPHome releases are caught before users hit them
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  compile:
+    name: ${{ matrix.config }} (esphome ${{ matrix.channel }})
+    runs-on: ubuntu-latest
+    # Beta failures are an early warning, not a blocker
+    continue-on-error: ${{ matrix.channel == 'beta' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [test-arduino, test-esp-idf]
+        channel: [stable, beta]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Cache toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/esphome
+            ~/.platformio
+          key: toolchains-${{ matrix.config }}-${{ matrix.channel }}-${{ github.run_id }}
+          restore-keys: toolchains-${{ matrix.config }}-${{ matrix.channel }}-
+
+      - name: Compile
+        run: |
+          if [ "${{ matrix.channel }}" = "beta" ]; then
+            PRERELEASE="--prerelease=allow"
+          fi
+          uvx $PRERELEASE --from esphome esphome version
+          uvx $PRERELEASE --from esphome esphome compile tests/${{ matrix.config }}.yaml

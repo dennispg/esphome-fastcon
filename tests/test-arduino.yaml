@@ -1,0 +1,29 @@
+# Compile-only test config (used by CI). Not meant to be flashed.
+esphome:
+  name: fastcon-test-arduino
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+
+esp32_ble_tracker:
+esp32_ble_server:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+fastcon:
+  mesh_key: "12345678"
+
+light:
+  - platform: fastcon
+    name: "Test Light 1"
+    light_id: 1
+  - platform: fastcon
+    name: "Test Light 2"
+    light_id: 2
