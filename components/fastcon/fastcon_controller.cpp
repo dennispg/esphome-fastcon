@@ -215,31 +215,23 @@ namespace esphome
                 light_data[3] = static_cast<uint8_t>(values.get_green() * 255.0f);
             }
 
+            // The warm and cold channels are 7-bit (0-127): the app's own white payload is
+            // ff0000007f7f, and values above 0x7f make the bulb ignore the command.
+            constexpr float WHITE_CHANNEL_MAX = 127.0f;
+
             if (has_cold_warm)
             {
-                light_data[4] = static_cast<uint8_t>(values.get_warm_white() * 255.0f);
-                light_data[5] = static_cast<uint8_t>(values.get_cold_white() * 255.0f);
+                light_data[4] = static_cast<uint8_t>(std::lround(values.get_warm_white() * WHITE_CHANNEL_MAX));
+                light_data[5] = static_cast<uint8_t>(std::lround(values.get_cold_white() * WHITE_CHANNEL_MAX));
             }
 
             if (has_temp)
             {
-                float temperature = values.get_color_temperature();
-                if (temperature < 153)
-                {
-                    light_data[4] = 0xff;
-                    light_data[5] = 0x00;
-                }
-                else if (temperature > 500)
-                {
-                    light_data[4] = 0x00;
-                    light_data[5] = 0xff;
-                }
-                else
-                {
-                    // Linear interpolation between (153, 0xff) and (500, 0x00)
-                    light_data[4] = (uint8_t)(((500 - temperature) * 255.0f + (temperature - 153) * 0x00) / (500 - 153));
-                    light_data[5] = (uint8_t)(((temperature - 153) * 255.0f + (500 - temperature) * 0x00) / (500 - 153));
-                }
+                // 153 mireds is the cold end (all cold), 500 the warm end (all warm)
+                const float temperature = std::clamp(values.get_color_temperature(), 153.0f, 500.0f);
+                const float warm_fraction = (temperature - 153.0f) / (500.0f - 153.0f);
+                light_data[4] = static_cast<uint8_t>(std::lround(warm_fraction * WHITE_CHANNEL_MAX));
+                light_data[5] = static_cast<uint8_t>(std::lround((1.0f - warm_fraction) * WHITE_CHANNEL_MAX));
             }
 
             return light_data;
