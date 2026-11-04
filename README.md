@@ -114,6 +114,8 @@ Each light is either a single bulb (`light_id`) or a group (`group_id`). Use exa
 - **id** (*Optional*, ID): The ID to use for this light component
 - **controller_id** (*Optional*, ID): The ID of the controller to use. Defaults to "fastcon_controller"
 
+Like the brMesh app, turning a light on or off, or changing only its brightness, doesn't send a colour: the bulb keeps whatever colour it last had. A colour is only sent when you change it. If you change a bulb's colour in the brMesh app, Home Assistant keeps showing the old colour until you set one from Home Assistant.
+
 ## Group Control
 
 The bulbs store a group number, and a group command is a single broadcast that every bulb in the group obeys, so they all change at the same instant instead of one after another. Group `0` is the brMesh app's "All" group and reaches every bulb with no setup.

@@ -72,6 +72,11 @@ namespace esphome
         protected:
             // Declared members, or every single-bulb light for group 0 with none declared
             const std::vector<FastconLight *> &get_members_() const;
+            // Take values' colour as what the bulb already shows (also for a light that is off)
+            void remember_colour_(const light::LightColorValues &values);
+            // A full command whose colour the bulb already shows becomes the short "on + brightness"
+            // command, so turning on or dimming never sends colour, as with the brMesh app
+            std::vector<uint8_t> drop_unchanged_colour_(const std::vector<uint8_t> &light_data);
             std::vector<uint8_t> get_member_ids_() const;
             void send_scene_();
 
@@ -92,6 +97,10 @@ namespace esphome
             bool scene_sent_{false};
 
             std::vector<uint8_t> mirrored_data_;
+            // Colour bytes (blue, red, green, warm, cold) the bulb is believed to show; empty if unknown
+            std::vector<uint8_t> sent_colour_;
+            // The first write is ESPHome restoring the saved state at boot
+            bool baseline_pending_{true};
         };
     } // namespace fastcon
 } // namespace esphome

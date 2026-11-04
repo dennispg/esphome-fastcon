@@ -217,7 +217,7 @@ namespace esphome
             }
         }
 
-        std::vector<uint8_t> FastconController::get_light_data(light::LightState *state)
+        std::vector<uint8_t> FastconController::get_light_data(const light::LightColorValues &values)
         {
             std::vector<uint8_t> light_data = {
                 0, // 0 - On/Off Bit + 7-bit Brightness
@@ -227,8 +227,6 @@ namespace esphome
                 0, // 4 - Warm byte
                 0  // 5 - Cold byte
             };
-
-            auto values = state->current_values;
 
             bool is_on = values.is_on();
             if (!is_on)
