@@ -3,7 +3,6 @@ import esphome.config_validation as cv
 from esphome import automation
 from esphome.components import esp32_ble, light
 from esphome.const import CONF_ID, CONF_LIGHT_ID
-from esphome.core import HexInt
 
 DEPENDENCIES = ["esp32_ble"]
 
@@ -40,16 +39,24 @@ DEFAULT_REPEAT_COUNT = 1
 
 
 def validate_hex_bytes(value):
+    # Returns the key as a normalised 8-character hex string (not a number), so that
+    # cv.sensitive can mask it: it only masks string values.
     if isinstance(value, str):
         value = value.replace(" ", "")
         if len(value) != 8:
             raise cv.Invalid("Mesh key must be exactly 4 bytes (8 hex characters)")
 
         try:
-            return HexInt(int(value, 16))
+            int(value, 16)
         except ValueError as err:
             raise cv.Invalid(f"Invalid hex value: {err}")
+        return value.lower()
     raise cv.Invalid("Mesh key must be a string")
+
+
+# Marks the mesh key as a secret so config dumps and frontends mask it. cv.sensitive is
+# new in ESPHome 2026.x; older versions don't have it and get the plain validator.
+_sensitive = getattr(cv, "sensitive", lambda inner: inner)
 
 
 fastcon_ns = cg.esphome_ns.namespace("fastcon")
@@ -67,7 +74,7 @@ CONFIG_SCHEMA = cv.Schema(
             FastconController
         ),
         cv.GenerateID(esp32_ble.CONF_BLE_ID): cv.use_id(esp32_ble.ESP32BLE),
-        cv.Required(CONF_MESH_KEY): validate_hex_bytes,
+        cv.Required(CONF_MESH_KEY): _sensitive(validate_hex_bytes),
         # Advertising TX power in dBm. Left at the Bluetooth stack's default unless set.
         cv.Optional(CONF_TX_POWER): cv.enum(TX_POWER_LEVELS, int=True),
         cv.Optional(
@@ -102,7 +109,7 @@ async def to_code(config):
         cg.add(var.set_tx_power(config[CONF_TX_POWER]))
 
     if CONF_MESH_KEY in config:
-        mesh_key = config[CONF_MESH_KEY]
+        mesh_key = int(str(config[CONF_MESH_KEY]), 16)
         key_bytes = [(mesh_key >> (i * 8)) & 0xFF for i in range(3, -1, -1)]
         cg.add(var.set_mesh_key(key_bytes))
 

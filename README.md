@@ -70,6 +70,9 @@ light:
 - **adv_gap** (*Optional*, int): Gap between advertisements in milliseconds. Defaults to 10
 - **max_queue_size** (*Optional*, int): Maximum number of commands that can be queued. Defaults to 100
 - **repeat_count** (*Optional*, int, 1-5): How many times each command is broadcast. Repeats go round-robin across the lights, so a bulb that misses one copy catches the next one shortly after. Defaults to 1
+- **tx_power** (*Optional*, int, dBm): Advertising transmit power: one of -12, -9, -6, -3, 0, 3, 6 or 9. Try `9` if bulbs far from the controller miss commands. Defaults to the Bluetooth stack's own setting, which the controller logs at boot
+
+If the Bluetooth controller rejects an advertisement, the log shows a `fastcon.controller` warning such as `failed to start advertising (status N)`. Without it, a command that never went out would look the same in the logs as one that did.
 
 The queue keeps at most one pending command per light: a newer command for a light replaces one that is still waiting (including a pending repeat), so stale states never pile up behind each other and lights always end in the latest state.
 
