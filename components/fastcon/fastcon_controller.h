@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deque>
+#include <initializer_list>
 #include <mutex>
 #include <vector>
 #include "esphome/core/automation.h"
@@ -62,6 +63,13 @@ namespace esphome
             // queued for member_light_ids are dropped, since the group command supersedes them.
             void send_group(uint8_t group_id, const std::vector<uint8_t> &light_data,
                             const std::vector<uint8_t> &member_light_ids);
+            // Start one of the bulbs' built-in effects on a group; the bulbs then run it by themselves.
+            // flash jumps between the steps, otherwise they fade. speed is 1-100, higher is faster.
+            // steps: up to 9, each a bit set of 0x01 blue, 0x02 red, 0x04 green, 0x08 warm white,
+            // 0x10 cold white (0x00 is off). An "on" for the group goes out first, so it also starts from off.
+            // Like send_group, commands still queued for member_light_ids are dropped.
+            void send_group_scene(uint8_t group_id, bool flash, uint8_t speed, std::vector<uint8_t> steps,
+                                  const std::vector<uint8_t> &member_light_ids = {});
             // Store a group number in one bulb (kept by the bulb; 0 removes it from its group)
             void send_set_group(uint8_t light_id, uint8_t group_id);
             // Every single-bulb light, so group 0 ("All") can mirror its state onto all of them
@@ -85,8 +93,12 @@ namespace esphome
             std::vector<FastconLight *> lights_;
             // Queue keys outside the 1-255 light ids, so each group and each bulb's set-group
             // command gets its own "newest wins" slot
-            static constexpr uint32_t GROUP_QUEUE_KEY = 0x10000;     // + group id
+            static constexpr uint32_t GROUP_QUEUE_KEY = 0x10000;     // + group id (steady state or effect)
             static constexpr uint32_t SET_GROUP_QUEUE_KEY = 0x20000; // + light id
+            static constexpr uint32_t GROUP_ON_QUEUE_KEY = 0x30000;  // + group id (the "on" sent before an effect)
+
+            // Drop anything still queued (including pending repeats) for these bulbs or queue keys
+            void drop_queued_(const std::vector<uint8_t> &light_ids, std::initializer_list<uint32_t> keys);
 
             enum class AdvertiseState
             {
