@@ -33,6 +33,7 @@ light:
     name: "All Lights"
     group_id: 0
   - platform: fastcon
+    id: room_group
     name: "Room Group"
     group_id: 1
     members: [test_light_1, test_light_2]
@@ -57,3 +58,7 @@ button:
       - fastcon.set_group:
           light_id: 2
           group_id: 1
+  - platform: template
+    name: "Assign Room Group members"
+    on_press:
+      - fastcon.assign_members: room_group

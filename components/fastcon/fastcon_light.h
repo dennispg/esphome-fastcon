@@ -38,6 +38,7 @@ namespace esphome
             void set_controller(FastconController *controller);
 
             uint8_t get_light_id() const { return light_id_; }
+            light::LightState *get_state() const { return state_; }
 
             // ---- Group lights ----
             // Send one group broadcast to group_id instead of a single-bulb command
@@ -48,6 +49,8 @@ namespace esphome
             }
             // A single-bulb fastcon light whose entity follows this group's state
             void add_member(light::LightState *member);
+            // Write this group's number into each declared member bulb (fastcon.assign_members)
+            void assign_members();
             bool is_group() const { return is_group_; }
 
             // Built-in effects (group lights only), called by FastconSceneEffect. start_scene sends the

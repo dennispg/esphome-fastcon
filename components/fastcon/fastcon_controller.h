@@ -75,6 +75,10 @@ namespace esphome
             // Every single-bulb light, so group 0 ("All") can mirror its state onto all of them
             void register_light(FastconLight *light) { lights_.push_back(light); }
             const std::vector<FastconLight *> &get_lights() const { return lights_; }
+            // Every group light, so fastcon.assign_members can find a group by its light entity
+            void register_group(FastconLight *group) { groups_.push_back(group); }
+            // Write a group light's number into each of its member bulbs (a one-off setup step)
+            void assign_members(light::LightState *group);
 
         protected:
             // One pending command per light. A newer command for the same light
@@ -91,6 +95,7 @@ namespace esphome
             size_t max_queue_size_{100};
             uint8_t repeat_count_{1};
             std::vector<FastconLight *> lights_;
+            std::vector<FastconLight *> groups_;
             // Queue keys outside the 1-255 light ids, so each group and each bulb's set-group
             // command gets its own "newest wins" slot
             static constexpr uint32_t GROUP_QUEUE_KEY = 0x10000;     // + group id (steady state or effect)
@@ -135,6 +140,19 @@ namespace esphome
             {
                 this->parent_->send_set_group(this->light_id_.value(x...), this->group_id_.value(x...));
             }
+        };
+
+        // fastcon.assign_members: write a group light's number into each of its member bulbs
+        template <typename... Ts>
+        class AssignMembersAction : public Action<Ts...>, public Parented<FastconController>
+        {
+        public:
+            void set_group(light::LightState *group) { group_ = group; }
+
+            void play(const Ts &...x) override { this->parent_->assign_members(this->group_); }
+
+        protected:
+            light::LightState *group_{nullptr};
         };
 
     } // namespace fastcon

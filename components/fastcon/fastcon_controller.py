@@ -1,6 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
+from esphome.components import light
 from esphome.const import CONF_ID, CONF_LIGHT_ID
 from esphome.core import HexInt
 
@@ -14,6 +15,7 @@ CONF_ADV_GAP = "adv_gap"
 CONF_MAX_QUEUE_SIZE = "max_queue_size"
 CONF_REPEAT_COUNT = "repeat_count"
 CONF_GROUP_ID = "group_id"
+CONF_GROUP = "group"
 
 DEFAULT_ADV_INTERVAL_MIN = 0x20
 DEFAULT_ADV_INTERVAL_MAX = 0x40
@@ -40,6 +42,9 @@ fastcon_ns = cg.esphome_ns.namespace("fastcon")
 FastconController = fastcon_ns.class_("FastconController", cg.Component)
 SetGroupAction = fastcon_ns.class_(
     "SetGroupAction", automation.Action, cg.Parented.template(FastconController)
+)
+AssignMembersAction = fastcon_ns.class_(
+    "AssignMembersAction", automation.Action, cg.Parented.template(FastconController)
 )
 
 CONFIG_SCHEMA = cv.Schema(
@@ -110,4 +115,25 @@ async def set_group_to_code(config, action_id, template_arg, args):
     cg.add(var.set_light_id(light_id))
     group_id = await cg.templatable(config[CONF_GROUP_ID], args, cg.uint8)
     cg.add(var.set_group_id(group_id))
+    return var
+
+
+# Write a group light's number into each bulb listed in its members.
+@automation.register_action(
+    "fastcon.assign_members",
+    AssignMembersAction,
+    cv.maybe_simple_value(
+        {
+            cv.GenerateID(): cv.use_id(FastconController),
+            cv.Required(CONF_GROUP): cv.use_id(light.LightState),
+        },
+        key=CONF_GROUP,
+    ),
+    synchronous=True,
+)
+async def assign_members_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    group = await cg.get_variable(config[CONF_GROUP])
+    cg.add(var.set_group(group))
     return var
