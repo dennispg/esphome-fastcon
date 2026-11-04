@@ -113,21 +113,63 @@ namespace esphome
             return traits;
         }
 
+        void FastconLight::remember_colour_(const light::LightColorValues &values)
+        {
+            auto on_values = values;
+            on_values.set_state(true);
+            const auto full = this->controller_->get_light_data(on_values);
+            if (full.size() == 6)
+                this->sent_colour_.assign(full.begin() + 1, full.end());
+            else
+                this->sent_colour_.clear();
+        }
+
+        std::vector<uint8_t> FastconLight::drop_unchanged_colour_(const std::vector<uint8_t> &light_data)
+        {
+            if (light_data.size() != 6)
+                return light_data;
+            std::vector<uint8_t> colour(light_data.begin() + 1, light_data.end());
+            if (colour == this->sent_colour_)
+                return {light_data[0]};
+            this->sent_colour_ = std::move(colour);
+            return light_data;
+        }
+
         void FastconLight::mirror(const light::LightColorValues &values, const std::vector<uint8_t> &light_data)
         {
             if (this->state_ == nullptr)
                 return;
             this->mirrored_data_ = light_data;
             auto call = this->state_->make_call();
-            call.from_light_color_values(values);
+            if (light_data.size() == 6)
+            {
+                // The group command set a colour, so the bulb shows it now
+                this->sent_colour_.assign(light_data.begin() + 1, light_data.end());
+                call.from_light_color_values(values);
+            }
+            else
+            {
+                // Only on/off or brightness: the bulb kept its own colour, so the entity keeps its colour too
+                call.set_state(values.is_on());
+                if (values.is_on())
+                    call.set_brightness(values.get_brightness());
+            }
             call.set_transition_length(0);
             call.perform();
         }
 
         void FastconLight::write_state(light::LightState *state)
         {
-            // Get the light data bits from the state
-            auto light_data = this->controller_->get_light_data(state);
+            const auto &values = state->current_values;
+            auto light_data = this->controller_->get_light_data(values);
+
+            if (this->baseline_pending_)
+            {
+                // The first write is ESPHome restoring the saved state at boot. Its colour is taken as what
+                // the bulb already shows (even when restored as off), so a plain "turn on" later keeps it.
+                this->baseline_pending_ = false;
+                this->remember_colour_(values);
+            }
 
             if (this->is_group_)
             {
@@ -152,11 +194,15 @@ namespace esphome
                     this->send_scene_();
                     return;
                 }
-                // Anything else (no effect, or turning off) goes out, and ends an effect on the bulbs
+                // Anything else (no effect, or turning off) goes out, and ends an effect on the bulbs.
+                // The steady colour after an effect has to go out in full: a short "on" wouldn't end it.
+                if (this->scene_sent_)
+                    this->sent_colour_.clear();
                 this->scene_sent_ = false;
 
                 // One broadcast for every bulb in the group
-                this->controller_->send_group(this->group_id_, light_data, this->get_member_ids_());
+                const auto sent = this->drop_unchanged_colour_(light_data);
+                this->controller_->send_group(this->group_id_, sent, this->get_member_ids_());
 
                 const auto &members = this->get_members_();
 
@@ -165,16 +211,19 @@ namespace esphome
                 if (state->current_values == state->remote_values)
                 {
                     for (auto *member : members)
-                        member->mirror(state->remote_values, light_data);
+                        member->mirror(state->remote_values, sent);
                 }
                 return;
             }
 
             if (!this->mirrored_data_.empty())
             {
-                // A group command already delivered this exact state to the bulb, so don't send it
-                // again. Anything different (a real change since the mirror) still goes out.
-                const bool already_delivered = light_data == this->mirrored_data_;
+                // A group command already reached the bulb, so don't send it again. A short group command
+                // (on/off or brightness) leaves the bulb's colour alone, so only that byte has to match.
+                // Anything different (a real change since the mirror) still goes out.
+                const bool already_delivered = this->mirrored_data_.size() == 1
+                                                   ? light_data[0] == this->mirrored_data_[0]
+                                                   : light_data == this->mirrored_data_;
                 this->mirrored_data_.clear();
                 if (already_delivered)
                 {
@@ -182,6 +231,8 @@ namespace esphome
                     return;
                 }
             }
+
+            light_data = this->drop_unchanged_colour_(light_data);
 
             // One short line per change; the full payload dumps are verbose-only
             bool is_on = (light_data[0] & 0x80) != 0;
