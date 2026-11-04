@@ -40,29 +40,22 @@ namespace esphome
             // Get the light data bits from the state
             auto light_data = this->controller_->get_light_data(state);
 
-            // Debug output - print the light state values
+            // One short line per change; the full payload dumps are verbose-only
             bool is_on = (light_data[0] & 0x80) != 0;
             float brightness = ((light_data[0] & 0x7F) / 127.0f) * 100.0f;
             if (light_data.size() == 1)
             {
-                ESP_LOGD(TAG, "Writing state: light_id=%d, on=%d, brightness=%.1f%%", light_id_, is_on, brightness);
+                ESP_LOGD(TAG, "Light %d: on=%d, brightness=%.0f%%", light_id_, is_on, brightness);
             }
             else
             {
-                auto r = light_data[2];
-                auto g = light_data[3];
-                auto b = light_data[1];
-                auto warm = light_data[4];
-                auto cold = light_data[5];
-                ESP_LOGD(TAG, "Writing state: light_id=%d, on=%d, brightness=%.1f%%, rgb=(%d,%d,%d), warm=%d, cold=%d", light_id_, is_on, brightness, r, g, b, warm, cold);
+                ESP_LOGD(TAG, "Light %d: on=%d, brightness=%.0f%%, rgb=(%d,%d,%d), warm=%d, cold=%d", light_id_, is_on, brightness,
+                         light_data[2], light_data[3], light_data[1], light_data[4], light_data[5]);
             }
 
             // Generate the advertisement payload
             auto adv_data = this->controller_->single_control(this->light_id_, light_data);
-
-            // Debug output - print payload as hex
-            auto hex_str = vector_to_hex_string(adv_data).data();
-            ESP_LOGD(TAG, "Advertisement Payload (%d bytes): %s", adv_data.size(), hex_str);
+            ESP_LOGV(TAG, "Advertisement Payload (%u bytes): %s", (unsigned) adv_data.size(), vector_to_hex_string(adv_data).c_str());
 
             // Send the advertisement
             this->controller_->queueCommand(this->light_id_, adv_data);
