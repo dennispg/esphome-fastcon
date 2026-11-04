@@ -156,12 +156,12 @@ namespace esphome
                 this->sent_colour_.clear();
         }
 
-        std::vector<uint8_t> FastconLight::drop_unchanged_colour_(const std::vector<uint8_t> &light_data)
+        std::vector<uint8_t> FastconLight::drop_unchanged_colour_(const std::vector<uint8_t> &light_data, bool resent)
         {
             if (light_data.size() != 6)
                 return light_data;
             std::vector<uint8_t> colour(light_data.begin() + 1, light_data.end());
-            if (colour == this->sent_colour_)
+            if (colour == this->sent_colour_ && !resent)
                 return {light_data[0]};
             this->sent_colour_ = std::move(colour);
             return light_data;
@@ -194,6 +194,11 @@ namespace esphome
         {
             const auto &values = state->current_values;
             auto light_data = this->controller_->get_light_data(values);
+
+            // ESPHome writes on every request, even one that changes nothing. Such a write can only be an
+            // explicit resend (e.g. picking the colour the light already has), so it sends the full colour.
+            const bool resent = !this->last_written_.empty() && light_data == this->last_written_;
+            this->last_written_ = light_data;
 
             if (this->baseline_pending_)
             {
@@ -233,7 +238,7 @@ namespace esphome
                 this->scene_sent_ = false;
 
                 // One broadcast for every bulb in the group
-                const auto sent = this->drop_unchanged_colour_(light_data);
+                const auto sent = this->drop_unchanged_colour_(light_data, resent);
                 this->controller_->send_group(this->group_id_, sent, this->get_member_ids_());
 
                 const auto &members = this->get_members_();
@@ -264,7 +269,7 @@ namespace esphome
                 }
             }
 
-            light_data = this->drop_unchanged_colour_(light_data);
+            light_data = this->drop_unchanged_colour_(light_data, resent);
 
             // One short line per change; the full payload dumps are verbose-only
             bool is_on = (light_data[0] & 0x80) != 0;

@@ -75,8 +75,9 @@ namespace esphome
             // Take values' colour as what the bulb already shows (also for a light that is off)
             void remember_colour_(const light::LightColorValues &values);
             // A full command whose colour the bulb already shows becomes the short "on + brightness"
-            // command, so turning on or dimming never sends colour, as with the brMesh app
-            std::vector<uint8_t> drop_unchanged_colour_(const std::vector<uint8_t> &light_data);
+            // command, so turning on or dimming never sends colour, as with the brMesh app. A write that
+            // changes nothing at all (resent) is an explicit request, so it keeps the full colour.
+            std::vector<uint8_t> drop_unchanged_colour_(const std::vector<uint8_t> &light_data, bool resent);
             std::vector<uint8_t> get_member_ids_() const;
             void send_scene_();
 
@@ -101,6 +102,8 @@ namespace esphome
             std::vector<uint8_t> sent_colour_;
             // The first write is ESPHome restoring the saved state at boot
             bool baseline_pending_{true};
+            // Full light data of the previous write, to recognise a write that changes nothing
+            std::vector<uint8_t> last_written_;
         };
     } // namespace fastcon
 } // namespace esphome
