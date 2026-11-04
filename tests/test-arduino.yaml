@@ -25,10 +25,12 @@ light:
     id: test_light_1
     name: "Test Light 1"
     light_id: 1
+    supports_color_temperature: false
   - platform: fastcon
     id: test_light_2
     name: "Test Light 2"
     light_id: 2
+    supports_white: false
   - platform: fastcon
     name: "All Lights"
     group_id: 0
