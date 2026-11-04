@@ -1,5 +1,7 @@
 """Light platform for Fastcon BLE lights."""
 
+import logging
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
@@ -18,6 +20,8 @@ from esphome.const import (
 from esphome.core import HexInt
 
 from .fastcon_controller import CONF_GROUP_ID, FastconController
+
+_LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = ["esp32_ble"]
 AUTO_LOAD = ["light"]
@@ -171,9 +175,41 @@ def _validate_member(member_id):
     return member_id
 
 
-FINAL_VALIDATE_SCHEMA = cv.Schema(
-    {cv.Optional(CONF_MEMBERS): [_validate_member]},
-    extra=cv.ALLOW_EXTRA,
+def _warn_shared_members(config):
+    # fastcon.assign_members writes a numbered group into each of its members. It isn't
+    # known whether a bulb can hold more than one group, so flag bulbs listed in two.
+    group_id = config.get(CONF_GROUP_ID)
+    if not group_id or CONF_MEMBERS not in config:
+        return config
+    mine = {str(member) for member in config[CONF_MEMBERS]}
+    for other in fv.full_config.get().get("light", []):
+        other_id = other.get(CONF_GROUP_ID)
+        # Report each pair of groups once, from the lower group number
+        if (
+            other.get(CONF_PLATFORM) != "fastcon"
+            or not other_id
+            or other_id <= group_id
+        ):
+            continue
+        theirs = {str(member) for member in other.get(CONF_MEMBERS, [])}
+        for member in sorted(mine & theirs):
+            _LOGGER.warning(
+                "Light '%s' is a member of both group %d and group %d. It isn't known "
+                "whether a bulb can belong to more than one group, so "
+                "fastcon.assign_members may leave it in only the group written last.",
+                member,
+                group_id,
+                other_id,
+            )
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = cv.All(
+    cv.Schema(
+        {cv.Optional(CONF_MEMBERS): [_validate_member]},
+        extra=cv.ALLOW_EXTRA,
+    ),
+    _warn_shared_members,
 )
 
 

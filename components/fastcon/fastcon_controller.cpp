@@ -459,5 +459,22 @@ namespace esphome
             }
             ESP_LOGE(TAG, "assign_members: '%s' is not a fastcon group light", group->get_name().c_str());
         }
+
+        void FastconController::assign_all_members()
+        {
+            size_t assigned = 0;
+            for (auto *group : this->groups_)
+            {
+                if (group->has_assignable_members())
+                {
+                    group->assign_members();
+                    assigned++;
+                }
+            }
+            if (assigned == 0)
+            {
+                ESP_LOGW(TAG, "assign_members: no group lights with members to assign");
+            }
+        }
     } // namespace fastcon
 } // namespace esphome

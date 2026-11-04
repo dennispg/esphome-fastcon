@@ -92,6 +92,8 @@ namespace esphome
             void register_group(FastconLight *group) { groups_.push_back(group); }
             // Write a group light's number into each of its member bulbs (a one-off setup step)
             void assign_members(light::LightState *group);
+            // The same for every group light that has members (group 0 needs no assigning)
+            void assign_all_members();
 
         protected:
             // One pending command per light. A newer command for the same light
@@ -165,7 +167,13 @@ namespace esphome
         public:
             void set_group(light::LightState *group) { group_ = group; }
 
-            void play(const Ts &...x) override { this->parent_->assign_members(this->group_); }
+            void play(const Ts &...x) override
+            {
+                if (this->group_ == nullptr)
+                    this->parent_->assign_all_members();
+                else
+                    this->parent_->assign_members(this->group_);
+            }
 
         protected:
             light::LightState *group_{nullptr};

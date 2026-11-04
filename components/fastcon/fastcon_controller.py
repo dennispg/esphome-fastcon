@@ -150,22 +150,35 @@ async def set_group_to_code(config, action_id, template_arg, args):
     return var
 
 
-# Write a group light's number into each bulb listed in its members.
+ASSIGN_MEMBERS_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(FastconController),
+        # Omitted: every group light that has members
+        cv.Optional(CONF_GROUP): cv.use_id(light.LightState),
+    }
+)
+
+
+def _validate_assign_members(value):
+    # `- fastcon.assign_members` (all groups) reaches here as {}, and
+    # `- fastcon.assign_members: some_group` as the bare id
+    if isinstance(value, dict):
+        return ASSIGN_MEMBERS_SCHEMA(value)
+    return ASSIGN_MEMBERS_SCHEMA({CONF_GROUP: value})
+
+
+# Write a group light's number into each bulb listed in its members, or do that for
+# every group light with members when no group is given.
 @automation.register_action(
     "fastcon.assign_members",
     AssignMembersAction,
-    cv.maybe_simple_value(
-        {
-            cv.GenerateID(): cv.use_id(FastconController),
-            cv.Required(CONF_GROUP): cv.use_id(light.LightState),
-        },
-        key=CONF_GROUP,
-    ),
+    _validate_assign_members,
     synchronous=True,
 )
 async def assign_members_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(var, config[CONF_ID])
-    group = await cg.get_variable(config[CONF_GROUP])
-    cg.add(var.set_group(group))
+    if CONF_GROUP in config:
+        group = await cg.get_variable(config[CONF_GROUP])
+        cg.add(var.set_group(group))
     return var
