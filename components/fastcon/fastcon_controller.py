@@ -11,12 +11,14 @@ CONF_ADV_INTERVAL_MAX = "adv_interval_max"
 CONF_ADV_DURATION = "adv_duration"
 CONF_ADV_GAP = "adv_gap"
 CONF_MAX_QUEUE_SIZE = "max_queue_size"
+CONF_REPEAT_COUNT = "repeat_count"
 
 DEFAULT_ADV_INTERVAL_MIN = 0x20
 DEFAULT_ADV_INTERVAL_MAX = 0x40
 DEFAULT_ADV_DURATION = 50
 DEFAULT_ADV_GAP = 10
 DEFAULT_MAX_QUEUE_SIZE = 100
+DEFAULT_REPEAT_COUNT = 1
 
 
 def validate_hex_bytes(value):
@@ -52,6 +54,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_MAX_QUEUE_SIZE, default=DEFAULT_MAX_QUEUE_SIZE
         ): cv.positive_int,
+        # Broadcast each command this many times, interleaved across lights
+        cv.Optional(CONF_REPEAT_COUNT, default=DEFAULT_REPEAT_COUNT): cv.int_range(
+            min=1, max=5
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -76,3 +82,4 @@ async def to_code(config):
     cg.add(var.set_adv_duration(config[CONF_ADV_DURATION]))
     cg.add(var.set_adv_gap(config[CONF_ADV_GAP]))
     cg.add(var.set_max_queue_size(config[CONF_MAX_QUEUE_SIZE]))
+    cg.add(var.set_repeat_count(config[CONF_REPEAT_COUNT]))

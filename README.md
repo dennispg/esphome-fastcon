@@ -46,6 +46,7 @@ fastcon:
   adv_duration: 50        # Advertisement duration in milliseconds
   adv_gap: 10             # Gap between advertisements in milliseconds
   max_queue_size: 100     # Maximum number of queued commands
+  repeat_count: 1         # How many times each command is broadcast
 
 # Light configuration (add an entry for each light)
 light:
@@ -66,6 +67,35 @@ light:
 - **adv_duration** (*Optional*, int): Duration of each advertisement in milliseconds. Defaults to 50
 - **adv_gap** (*Optional*, int): Gap between advertisements in milliseconds. Defaults to 10
 - **max_queue_size** (*Optional*, int): Maximum number of commands that can be queued. Defaults to 100
+- **repeat_count** (*Optional*, int, 1-5): How many times each command is broadcast. Repeats go round-robin across the lights, so a bulb that misses one copy catches the next one shortly after. Defaults to 1
+
+The queue keeps at most one pending command per light: a newer command for a light replaces one that is still waiting (including a pending repeat), so stale states never pile up behind each other and lights always end in the latest state.
+
+### Tuning for speed and reliability
+
+With 8 bulbs, this combination made every command land on the first tap while roughly halving the time for all bulbs to change (about 0.26 s for the first copy to reach all 8, versus about 0.42 s with the defaults):
+
+```yaml
+esp32_ble_tracker:
+  scan_parameters:
+    continuous: false     # nothing needs scanning; leaves the radio free for advertising
+
+fastcon:
+  mesh_key: "12345678"
+  adv_interval_min: 0x20  # 20 ms, the shortest advertising interval Bluetooth allows
+  adv_interval_max: 0x20
+  adv_duration: 35        # about 2 advertising events per send
+  adv_gap: 2
+  repeat_count: 2         # every command twice, round-robin across the lights
+
+light:
+  - platform: fastcon
+    name: "Light 1"
+    light_id: 1
+    default_transition_length: 0s   # transitions would queue a burst of intermediate commands
+```
+
+Note: the ESP32's Bluetooth stack rejects advertising intervals below 0x20, so values like 0x06 fail to advertise.
 
 #### Fastcon Light
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <queue>
+#include <deque>
 #include <mutex>
 #include <vector>
 #include "esphome/core/component.h"
@@ -37,6 +37,8 @@ namespace esphome
                 return queue_.size();
             }
             void set_max_queue_size(size_t size) { max_queue_size_ = size; }
+            // How many times each command is broadcast (interleaved across lights)
+            void set_repeat_count(uint8_t count) { repeat_count_ = count < 1 ? 1 : count; }
 
             void set_mesh_key(std::array<uint8_t, 4> key) { mesh_key_ = key; }
             void set_adv_interval_min(uint16_t val) { adv_interval_min_ = val; }
@@ -52,17 +54,19 @@ namespace esphome
             void set_adv_gap(uint16_t val) { adv_gap_ = val; }
 
         protected:
+            // One pending command per light. A newer command for the same light
+            // replaces the older one in place, so stale states never queue up behind each other.
             struct Command
             {
+                uint32_t light_id;
                 std::vector<uint8_t> data;
-                uint32_t timestamp;
-                uint8_t retries{0};
-                static constexpr uint8_t MAX_RETRIES = 3;
+                uint8_t sends_left;
             };
 
-            std::queue<Command> queue_;
+            std::deque<Command> queue_;
             mutable std::mutex queue_mutex_;
             size_t max_queue_size_{100};
+            uint8_t repeat_count_{1};
 
             enum class AdvertiseState
             {
