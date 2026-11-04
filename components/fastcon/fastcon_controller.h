@@ -3,7 +3,9 @@
 #include <deque>
 #include <mutex>
 #include <vector>
+#include "esphome/core/automation.h"
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/esp32_ble_server/ble_server.h"
 #include "esphome/components/light/light_state.h"
 
@@ -54,20 +56,17 @@ namespace esphome
             void set_adv_duration(uint16_t val) { adv_duration_ = val; }
             void set_adv_gap(uint16_t val) { adv_gap_ = val; }
 
-            // ---- Group control and the bulbs' built-in effects ----
-            // Group the "all lights" entity talks to. 0 is the app's "All" group.
-            void set_group_id(uint8_t gid) { group_id_ = gid; }
-            uint8_t get_group_id() const { return group_id_; }
-            // One broadcast that every bulb in the group obeys: 1- or 6-byte light data, as for single control
-            void send_group(const std::vector<uint8_t> &light_data);
-            // Built-in effect run by the bulbs themselves. statuses: up to 9 steps, each a bit set of
-            // 0x01 blue, 0x02 red, 0x04 green, 0x08 warm, 0x10 cold (0x00 = off). speed 1-100, higher = faster.
-            void send_group_scene(bool flash, float speed, std::vector<uint8_t> statuses);
+            // ---- Group control ----
+            // One broadcast that every bulb in the group obeys (group 0 is the app's "All" group).
+            // light_data is the same 1- or 6-byte light data as for single control. Commands still
+            // queued for member_light_ids are dropped, since the group command supersedes them.
+            void send_group(uint8_t group_id, const std::vector<uint8_t> &light_data,
+                            const std::vector<uint8_t> &member_light_ids);
             // Store a group number in one bulb (kept by the bulb; 0 removes it from its group)
-            void send_set_group(uint8_t light_id, uint8_t gid);
-            // Individual lights, so a group command can update their state in Home Assistant
-            void register_member(FastconLight *light) { members_.push_back(light); }
-            void mirror_to_members(const light::LightColorValues &values);
+            void send_set_group(uint8_t light_id, uint8_t group_id);
+            // Every single-bulb light, so group 0 ("All") can mirror its state onto all of them
+            void register_light(FastconLight *light) { lights_.push_back(light); }
+            const std::vector<FastconLight *> &get_lights() const { return lights_; }
 
         protected:
             // One pending command per light. A newer command for the same light
@@ -83,12 +82,11 @@ namespace esphome
             mutable std::mutex queue_mutex_;
             size_t max_queue_size_{100};
             uint8_t repeat_count_{1};
-            uint8_t group_id_{0};
-            std::vector<FastconLight *> members_;
-            // Queue keys outside the 1-255 light ids, so group frames get their own "newest wins" slot
-            static constexpr uint32_t GROUP_QUEUE_KEY = 0x10000;
-            static constexpr uint32_t SET_GROUP_QUEUE_KEY = 0x20000;
-            static constexpr uint32_t GROUP_ON_QUEUE_KEY = 0x10001;
+            std::vector<FastconLight *> lights_;
+            // Queue keys outside the 1-255 light ids, so each group and each bulb's set-group
+            // command gets its own "newest wins" slot
+            static constexpr uint32_t GROUP_QUEUE_KEY = 0x10000;     // + group id
+            static constexpr uint32_t SET_GROUP_QUEUE_KEY = 0x20000; // + light id
 
             enum class AdvertiseState
             {
@@ -111,6 +109,20 @@ namespace esphome
             uint16_t adv_gap_{10};
 
             static const uint16_t MANUFACTURER_DATA_ID = 0xfff0;
+        };
+
+        // fastcon.set_group: write a group number into one bulb (a one-off setup step)
+        template <typename... Ts>
+        class SetGroupAction : public Action<Ts...>, public Parented<FastconController>
+        {
+        public:
+            TEMPLATABLE_VALUE(uint8_t, light_id)
+            TEMPLATABLE_VALUE(uint8_t, group_id)
+
+            void play(const Ts &...x) override
+            {
+                this->parent_->send_set_group(this->light_id_.value(x...), this->group_id_.value(x...));
+            }
         };
 
     } // namespace fastcon

@@ -17,8 +17,7 @@ Be warned - there is also a brLight app, which might look like brMesh, but the p
 - Brightness control
 - RGB color control
 - White mode
-- Group control (all bulbs change at the same instant)
-- The bulbs' built-in effects (flash and fade sequences)
+- Group control (all bulbs in a group change at the same instant)
 
 ## Configuration
 
@@ -101,75 +100,71 @@ Note: the ESP32's Bluetooth stack rejects advertising intervals below 0x20, so v
 
 #### Fastcon Light
 
-- **light_id** (*Required*, int): The ID of the light (1-255)
+Each light is either a single bulb (`light_id`) or a group (`group_id`). Use exactly one of the two.
+
+- **light_id** (*Optional*, int): The ID of a single bulb (1-255)
+- **group_id** (*Optional*, int): A group number (0-255), controlled with a single broadcast. `0` is the brMesh app's "All" group. See [Group Control](#group-control)
+- **members** (*Optional*, list of light IDs): Group lights only. The single-bulb lights in this group, so their entities follow the group's state. Group `0` without `members` follows every single-bulb light
 - **name** (*Required*, string): The name for the light entity
 - **id** (*Optional*, ID): The ID to use for this light component
 - **controller_id** (*Optional*, ID): The ID of the controller to use. Defaults to "fastcon_controller"
 
-## Group Control and Built-in Effects
+## Group Control
 
 The bulbs store a group number, and a group command is a single broadcast that every bulb in the group obeys, so they all change at the same instant instead of one after another. Group `0` is the brMesh app's "All" group and reaches every bulb with no setup.
 
-Add a light with `group: true` to control the whole group as one entity. Its state is mirrored onto the individual lights' entities (without sending anything to them), so Home Assistant stays in sync:
+Add a light with `group_id` to control a whole group as one entity:
 
 ```yaml
 light:
   - platform: fastcon
-    id: all_lights
-    name: "All Lights"
-    group: true                     # one group command instead of a single bulb
-    default_transition_length: 0s
-    effects:                        # the bulbs' own built-in effects, see below
-      - lambda:
-          name: "Red flash"
-          update_interval: 1h
-          lambda: |-
-            if (initial_run) id(fastcon_controller).send_group_scene(true, id(effect_speed).state, {0x02, 0x00});
-      - lambda:
-          name: "Full colour fade"
-          update_interval: 1h
-          lambda: |-
-            if (initial_run) id(fastcon_controller).send_group_scene(false, id(effect_speed).state, {0x02, 0x03, 0x01, 0x05, 0x04, 0x06});
-  - platform: fastcon
-    name: "Light 1"
+    id: living_room_1
+    name: "Living Room 1"
     light_id: 1
     default_transition_length: 0s
+  - platform: fastcon
+    id: living_room_2
+    name: "Living Room 2"
+    light_id: 2
+    default_transition_length: 0s
 
-number:
-  - platform: template
-    id: effect_speed
-    name: "Effect Speed"            # 1-100, higher is faster; read when an effect starts
-    min_value: 1
-    max_value: 100
-    step: 1
-    initial_value: 60
-    optimistic: true
-    restore_value: true
+  - platform: fastcon
+    name: "Living Room"
+    group_id: 1
+    members: [living_room_1, living_room_2]
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "All Lights"
+    group_id: 0                     # every bulb, no setup needed
+    default_transition_length: 0s
 ```
 
-The group light addresses group 0 by default. To use another group, call `id(fastcon_controller).set_group_id(n)` (for example from a template `number`), and write the group into each bulb with `id(fastcon_controller).send_set_group(light_id, n)`. The bulb stores it; `0` removes it from its group.
+When a group light changes, its new state is mirrored onto its members' entities without sending anything more to those bulbs, so Home Assistant stays in sync. A group without `members` still controls its bulbs, but their entities won't follow along (except group `0`, which mirrors to every single-bulb light).
 
-### Built-in effects
+### Putting bulbs in a group
 
-`send_group_scene(flash, speed, steps)` starts one of the bulbs' own effects: one command, after which the bulbs run the effect by themselves with no further Bluetooth traffic. It keeps running until the next command (choosing another colour, turning off, or setting the effect to None).
+Groups you set up in the brMesh app work as they are, as long as you use the same group number. You can also write a group into a bulb with the `fastcon.set_group` action. The bulb remembers it, and group `0` removes the bulb from its group:
 
-- **flash**: `true` jumps between the steps, `false` fades between them.
-- **speed**: 1-100, higher is faster.
-- **steps**: up to 9 colours, each a combination of `0x01` blue, `0x02` red, `0x04` green, `0x08` warm white, `0x10` cold white, or `0x00` off. For example `{0x02, 0x00}` is a red flash, `{0x02, 0x01}` alternates red and blue, and `{0x06, 0x03}` fades between yellow and purple.
+```yaml
+button:
+  - platform: template
+    name: "Put Living Room 2 in group 1"
+    on_press:
+      - fastcon.set_group:
+          light_id: 2
+          group_id: 1
+```
 
-Starting an effect also sends an "on" first, so it works from off. While an effect runs, the group light doesn't send steady-colour updates (they would cancel it), and stopping the effect sends the steady colour again.
+Group numbers 253-255 are reserved by the app (temporary groups), and 193-252 are used for its sensor groups, so pick groups from 1-192.
 
 ### Protocol notes
 
-These layouts were worked out by analysing the brMesh Android app (5.92), for interoperability with the author's own lights. All use command type 5 and the same packet format as single-light control; only the inner payload differs:
+These layouts were worked out by analysing the brMesh Android app (5.92), for interoperability with the author's own lights. Both use command type 5 and the same packet format as single-light control; only the inner payload differs:
 
 | Command | Inner payload |
 |---|---|
 | Group control | `((len+3)<<4)\|3`, `2A A8` (light device type), group, then 1- or 6-byte light data |
-| Built-in effect | `((k+2)<<4)\|0x0C`, group, speed (in 1/64 s ticks), then k steps (first step `\| 0x40`, plus `\| 0x80` for flash) |
 | Set a bulb's group | `21`, light id, group (forward bit clear) |
-
-Group numbers 253-255 are reserved by the app (temporary groups), and 193-252 are used for its sensor groups.
 
 ## Finding Your Mesh Key
 
@@ -190,6 +185,8 @@ This component builds upon the reverse engineering and hard work of several othe
 ### Protocol Reverse Engineering
 
 The foundational protocol reverse engineering work was done by [Mooody](https://mooody.me/posts/2023-04/reverse-the-fastcon-ble-protocol/), who provided detailed analysis of the Fastcon BLE protocol, including packet structure and encryption methods. https://mooody.me/posts/2023-04/reverse-the-fastcon-ble-protocol/
+
+The group control and set-group frame formats were decoded by [leon101noel](https://github.com/leon101noel) and independently confirmed by [oriolfda](https://github.com/oriolfda/esphome-fastcon).
 
 ### Implementation References
 

@@ -24,23 +24,41 @@ namespace esphome
             FastconLight(uint8_t light_id) : light_id_(light_id) {}
 
             void setup() override;
-            void loop() override;
             light::LightTraits get_traits() override;
             void write_state(light::LightState *state) override;
-            void set_controller(FastconController *controller);
-            // The "all lights" entity sends one group command instead of a single-bulb one
-            void set_group(bool group) { is_group_ = group; }
             void setup_state(light::LightState *state) override { state_ = state; }
-            // Show a group command's result on this bulb's entity without sending anything
-            void mirror(const light::LightColorValues &values);
+            void set_controller(FastconController *controller);
+
+            uint8_t get_light_id() const { return light_id_; }
+
+            // ---- Group lights ----
+            // Send one group broadcast to group_id instead of a single-bulb command
+            void set_group_id(uint8_t group_id)
+            {
+                group_id_ = group_id;
+                is_group_ = true;
+            }
+            // A single-bulb fastcon light whose entity follows this group's state
+            void add_member(light::LightState *member);
+
+            // ---- Single-bulb lights ----
+            // Show a group command's result on this bulb's entity. light_data is what the group
+            // command already delivered, so the write this causes is not sent again.
+            void mirror(const light::LightColorValues &values, const std::vector<uint8_t> &light_data);
 
         protected:
+            // Declared members, or every single-bulb light for group 0 with none declared
+            const std::vector<FastconLight *> &get_members_() const;
+
             FastconController *controller_{nullptr};
-            uint8_t light_id_;
-            bool is_group_{false};
             light::LightState *state_{nullptr};
-            uint32_t mirror_until_{0};
-            bool effect_was_active_{false};
+            uint8_t light_id_;
+
+            bool is_group_{false};
+            uint8_t group_id_{0};
+            std::vector<FastconLight *> members_;
+
+            std::vector<uint8_t> mirrored_data_;
         };
     } // namespace fastcon
 } // namespace esphome
