@@ -108,6 +108,7 @@ Each light is either a single bulb (`light_id`) or a group (`group_id`). Use exa
 - **members** (*Optional*, list of light IDs): Group lights only. The single-bulb lights in this group, so their entities follow the group's state. Group `0` without `members` follows every single-bulb light
 - **supports_white** (*Optional*, boolean): Set to `false` for RGB-only bulbs, which have no white LEDs. Home Assistant then offers only the colour wheel, and white comes from the RGB channels. Defaults to `true`
 - **supports_rgb** (*Optional*, boolean): Set to `false` for white-only bulbs, which have only cold/warm white LEDs. Home Assistant then offers only colour temperature. Defaults to `true`
+- **supports_color_temperature** (*Optional*, boolean): Set to `false` for bulbs with a single white and no adjustable colour temperature (the brMesh app offers just one "white"). Home Assistant then offers the colour wheel and a white button, but no colour temperature slider. Has no effect when `supports_white` is `false`. Defaults to `true`
 - **effects** (*Optional*, list): ESPHome light effects. Group lights can also use the bulbs' own effects with `fastcon_scene`. See [Built-in effects](#built-in-effects)
 - **name** (*Required*, string): The name for the light entity
 - **id** (*Optional*, ID): The ID to use for this light component

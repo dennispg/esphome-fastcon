@@ -26,6 +26,7 @@ CONF_CONTROLLER_ID = "controller_id"
 CONF_MEMBERS = "members"
 CONF_SUPPORTS_RGB = "supports_rgb"
 CONF_SUPPORTS_WHITE = "supports_white"
+CONF_SUPPORTS_COLOR_TEMPERATURE = "supports_color_temperature"
 CONF_FASTCON_SCENE = "fastcon_scene"
 CONF_STEPS = "steps"
 
@@ -140,9 +141,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_MEMBERS): cv.ensure_list(cv.use_id(light.LightState)),
             cv.Optional(CONF_EFFECTS): _validate_effects,
             # Which LEDs the bulb has. RGB-only bulbs set supports_white: false,
-            # white-only (cold/warm) bulbs set supports_rgb: false.
+            # white-only bulbs set supports_rgb: false, and bulbs with a single white
+            # (no adjustable colour temperature) set supports_color_temperature: false.
             cv.Optional(CONF_SUPPORTS_RGB, default=True): cv.boolean,
             cv.Optional(CONF_SUPPORTS_WHITE, default=True): cv.boolean,
+            cv.Optional(CONF_SUPPORTS_COLOR_TEMPERATURE, default=True): cv.boolean,
             cv.Optional(CONF_CONTROLLER_ID, default="fastcon_controller"): cv.use_id(
                 FastconController
             ),
@@ -183,6 +186,7 @@ async def to_code(config):
     cg.add(var.set_controller(controller))
     cg.add(var.set_supports_rgb(config[CONF_SUPPORTS_RGB]))
     cg.add(var.set_supports_white(config[CONF_SUPPORTS_WHITE]))
+    cg.add(var.set_supports_color_temperature(config[CONF_SUPPORTS_COLOR_TEMPERATURE]))
 
     if CONF_GROUP_ID in config:
         cg.add(var.set_group_id(config[CONF_GROUP_ID]))

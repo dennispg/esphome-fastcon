@@ -107,25 +107,35 @@ namespace esphome
         light::LightTraits FastconLight::get_traits()
         {
             auto traits = light::LightTraits();
-            if (this->supports_rgb_ && this->supports_white_)
+            const bool color_temperature = this->supports_white_ && this->supports_color_temperature_;
+            if (this->supports_rgb_ && color_temperature)
             {
                 traits.set_supported_color_modes({light::ColorMode::RGB, light::ColorMode::WHITE, light::ColorMode::BRIGHTNESS, light::ColorMode::COLD_WARM_WHITE});
+            }
+            else if (this->supports_rgb_ && this->supports_white_)
+            {
+                // RGB plus a single white (the white mode payload), without colour temperature
+                traits.set_supported_color_modes({light::ColorMode::RGB, light::ColorMode::WHITE, light::ColorMode::BRIGHTNESS});
             }
             else if (this->supports_rgb_)
             {
                 // RGB-only bulbs: no white LEDs, so white comes from the RGB channels
                 traits.set_supported_color_modes({light::ColorMode::RGB});
             }
-            else if (this->supports_white_)
+            else if (color_temperature)
             {
                 // White-only (cold/warm) bulbs
                 traits.set_supported_color_modes({light::ColorMode::COLD_WARM_WHITE});
+            }
+            else if (this->supports_white_)
+            {
+                traits.set_supported_color_modes({light::ColorMode::WHITE});
             }
             else
             {
                 traits.set_supported_color_modes({light::ColorMode::BRIGHTNESS});
             }
-            if (this->supports_white_)
+            if (color_temperature)
             {
                 traits.set_min_mireds(153);
                 traits.set_max_mireds(500);

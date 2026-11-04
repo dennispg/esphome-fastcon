@@ -42,6 +42,7 @@ namespace esphome
             // Which LEDs the bulb has, so Home Assistant only offers controls that do something
             void set_supports_rgb(bool supports) { supports_rgb_ = supports; }
             void set_supports_white(bool supports) { supports_white_ = supports; }
+            void set_supports_color_temperature(bool supports) { supports_color_temperature_ = supports; }
 
             // ---- Group lights ----
             // Send one group broadcast to group_id instead of a single-bulb command
@@ -79,6 +80,7 @@ namespace esphome
             uint8_t light_id_;
             bool supports_rgb_{true};
             bool supports_white_{true};
+            bool supports_color_temperature_{true};
 
             bool is_group_{false};
             bool boot_write_pending_{true};
