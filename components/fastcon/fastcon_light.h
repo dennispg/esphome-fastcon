@@ -55,6 +55,8 @@ namespace esphome
             void add_member(light::LightState *member);
             // Write this group's number into each declared member bulb (fastcon.assign_members)
             void assign_members();
+            // A numbered group with declared members, i.e. something assign_members can write
+            bool has_assignable_members() const { return is_group_ && group_id_ != 0 && !members_.empty(); }
             bool is_group() const { return is_group_; }
 
             // Built-in effects (group lights only), called by FastconSceneEffect. start_scene sends the

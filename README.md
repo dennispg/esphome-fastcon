@@ -60,6 +60,20 @@ light:
     name: "Living Room Light"
     light_id: 1           # ID of the light (1-255)
     default_transition_length: 0s   # transitions would send a burst of intermediate commands
+
+  # Optional: several bulbs switched together by one command (see Group Control)
+  - platform: fastcon
+    name: "Living Room"
+    group_id: 1
+    members: [living_room_light]
+    default_transition_length: 0s
+
+# Optional: press once to write each group's number into its member bulbs
+button:
+  - platform: template
+    name: "Assign bulbs to their groups"
+    on_press:
+      - fastcon.assign_members
 ```
 
 ### Configuration Variables
@@ -159,7 +173,17 @@ At boot, a group light only restores its own entity's state. It doesn't broadcas
 
 The bulbs decide which group broadcasts they obey: each bulb stores a group number. `members` only tells ESPHome which entities to keep in sync. The bulbs never report their group back, so the two have to match.
 
-Groups you set up in the brMesh app work as they are, as long as you use the same group number. Otherwise, press a button with `fastcon.assign_members` once. It writes the group's number into every bulb in its `members`:
+Groups you set up in the brMesh app work as they are, as long as you use the same group number. Otherwise, press a button with `fastcon.assign_members` once. It writes each group's number into every bulb in that group's `members`, for all your group lights at once:
+
+```yaml
+button:
+  - platform: template
+    name: "Assign bulbs to their groups"
+    on_press:
+      - fastcon.assign_members
+```
+
+To assign just one group, give its light's `id`:
 
 ```yaml
 light:
@@ -176,7 +200,7 @@ button:
       - fastcon.assign_members: living_room
 ```
 
-The bulbs remember their group, so you only need to press it again after changing `members`. It isn't known yet whether a bulb can belong to more than one group, so assigning a bulb to a new group may take it out of its old one. If a bulb doesn't respond, press it again, or set `repeat_count` on the controller.
+The bulbs remember their group, so you only need to press it again after changing `members`. Group `0` and groups without `members` are skipped, since there's nothing to write. It isn't known yet whether a bulb can belong to more than one group, so assigning a bulb to a new group may take it out of its old one. The config check warns if a bulb is listed in more than one numbered group. If a bulb doesn't respond, press it again, or set `repeat_count` on the controller.
 
 To write a group into a single bulb, use `fastcon.set_group`. Group `0` removes the bulb from its group:
 
