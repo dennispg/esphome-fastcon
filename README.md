@@ -9,7 +9,7 @@ Be warned - there is also a brLight app, which might look like brMesh, but the p
 ## Requirements
 
 - ESP32 board (`arduino` or `esp-idf` framework)
-- ESPHome 2023.12.0 or newer (CI compiles against the latest stable and beta releases every week)
+- ESPHome 2026.3.0 or newer (CI compiles against the latest stable and beta releases every week)
 
 ## Supported Features
 
@@ -17,6 +17,8 @@ Be warned - there is also a brLight app, which might look like brMesh, but the p
 - Brightness control
 - RGB color control
 - White mode
+- Turning on, off and dimming keep the bulb's own color, like the brMesh app
+- Per-light capabilities for RGB-only, white-only and single-white bulbs
 - Group control (all bulbs in a group change at the same instant)
 - The bulbs' built-in effects (flash and fade sequences) on group lights
 
@@ -31,7 +33,8 @@ esp32:
   framework:
     type: arduino
 
-esp32_ble_tracker:
+# Required by the component. Don't add esp32_ble_tracker unless something else
+# needs it: see "Bulbs don't respond" under Troubleshooting.
 esp32_ble_server:
 
 # Source configuration (pinned to a release; use @main for the latest unreleased changes)
@@ -42,7 +45,7 @@ external_components:
 fastcon:
   mesh_key: "12345678"    # Your mesh key in hex format
 
-  # Optional parameters to control the advertisdement protocol with their defaults:
+  # Optional parameters to control the advertisement protocol with their defaults:
   adv_interval_min: 0x20  # Minimum advertisement interval
   adv_interval_max: 0x40  # Maximum advertisement interval
   adv_duration: 50        # Advertisement duration in milliseconds
@@ -56,6 +59,7 @@ light:
     id: living_room_light
     name: "Living Room Light"
     light_id: 1           # ID of the light (1-255)
+    default_transition_length: 0s   # transitions would send a burst of intermediate commands
 ```
 
 ### Configuration Variables
@@ -78,13 +82,9 @@ The queue keeps at most one pending command per light: a newer command for a lig
 
 ### Tuning for speed and reliability
 
-With 8 bulbs, this combination made every command land on the first tap while roughly halving the time for all bulbs to change (about 0.26 s for the first copy to reach all 8, versus about 0.42 s with the defaults):
+The defaults are deliberately conservative. With 8 bulbs, this combination made every command land on the first tap while roughly halving the time for all bulbs to change (about 0.26 s for the first copy to reach all 8, versus about 0.42 s with the defaults). It needs a controller that isn't scanning (see [Troubleshooting](#troubleshooting)):
 
 ```yaml
-esp32_ble_tracker:
-  scan_parameters:
-    continuous: false     # nothing needs scanning; leaves the radio free for advertising
-
 fastcon:
   mesh_key: "12345678"
   adv_interval_min: 0x20  # 20 ms, the shortest advertising interval Bluetooth allows
@@ -100,6 +100,8 @@ light:
     default_transition_length: 0s   # transitions would queue a burst of intermediate commands
 ```
 
+If bulbs miss commands with these settings, raise `adv_duration` (100-200 ms) or set `tx_power: 9`. Group lights send one command for the whole group, so even slow settings stay quick for them.
+
 Note: the ESP32's Bluetooth stack rejects advertising intervals below 0x20, so values like 0x06 fail to advertise.
 
 #### Fastcon Light
@@ -109,15 +111,15 @@ Each light is either a single bulb (`light_id`) or a group (`group_id`). Use exa
 - **light_id** (*Optional*, int): The ID of a single bulb (1-255)
 - **group_id** (*Optional*, int): A group number (0-255), controlled with a single broadcast. `0` is the brMesh app's "All" group. See [Group Control](#group-control)
 - **members** (*Optional*, list of light IDs): Group lights only. The single-bulb lights in this group, so their entities follow the group's state. Group `0` without `members` follows every single-bulb light
-- **supports_white** (*Optional*, boolean): Set to `false` for RGB-only bulbs, which have no white LEDs. Home Assistant then offers only the colour wheel, and white comes from the RGB channels. Defaults to `true`
-- **supports_rgb** (*Optional*, boolean): Set to `false` for white-only bulbs, which have only cold/warm white LEDs. Home Assistant then offers only colour temperature. Defaults to `true`
-- **supports_color_temperature** (*Optional*, boolean): Set to `false` for bulbs with a single white and no adjustable colour temperature (the brMesh app offers just one "white"). Home Assistant then offers the colour wheel and a white button, but no colour temperature slider. Has no effect when `supports_white` is `false`. Defaults to `true`
+- **supports_white** (*Optional*, boolean): Set to `false` for RGB-only bulbs, which have no white LEDs. Home Assistant then offers only the color wheel, and white comes from the RGB channels. Defaults to `true`
+- **supports_rgb** (*Optional*, boolean): Set to `false` for white-only bulbs, which have only cold/warm white LEDs. Home Assistant then offers only color temperature. Defaults to `true`
+- **supports_color_temperature** (*Optional*, boolean): Set to `false` for bulbs with a single white and no adjustable color temperature (the brMesh app offers just one "white"). Home Assistant then offers the color wheel and a white button, but no color temperature slider. Has no effect when `supports_white` is `false`. Defaults to `true`
 - **effects** (*Optional*, list): ESPHome light effects. Group lights can also use the bulbs' own effects with `fastcon_scene`. See [Built-in effects](#built-in-effects)
 - **name** (*Required*, string): The name for the light entity
 - **id** (*Optional*, ID): The ID to use for this light component
 - **controller_id** (*Optional*, ID): The ID of the controller to use. Defaults to "fastcon_controller"
 
-Like the brMesh app, turning a light on or off, or changing only its brightness, doesn't send a colour: the bulb keeps whatever colour it last had. A colour is only sent when you change it, or when you pick the colour a light that is already on already has, which re-applies it (for example to a group whose bulbs were changed one by one). If you change a bulb's colour in the brMesh app, Home Assistant keeps showing the old colour until you set one from Home Assistant.
+Like the brMesh app, turning a light on or off, or changing only its brightness, doesn't send a color: the bulb keeps whatever color it last had. A color is only sent when you change it, or when you pick the color a light that is already on already has, which re-applies it (for example to a group whose bulbs were changed one by one). If you change a bulb's color in the brMesh app, Home Assistant keeps showing the old color until you set one from Home Assistant.
 
 ## Group Control
 
@@ -211,11 +213,11 @@ light:
 - **name** (*Optional*, string): The effect's name. Defaults to `Scene`
 - **mode** (*Optional*, `flash` or `fade`): `flash` jumps between the steps, `fade` fades between them. Defaults to `fade`
 - **speed** (*Optional*, int, 1-100): Higher is faster. Defaults to 50
-- **steps** (*Required*, list, 1-9 entries): The colours to go through. Each is one of `off`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta` (or `purple`), `white`, `warm_white`, `cold_white`, or a number from `0x00` to `0x1F` made by adding `0x01` blue, `0x02` red, `0x04` green, `0x08` warm white and `0x10` cold white. Quote `"off"`, or YAML may read it as `false` (which also works)
+- **steps** (*Required*, list, 1-9 entries): The colors to go through. Each is one of `off`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta` (or `purple`), `white`, `warm_white`, `cold_white`, or a number from `0x00` to `0x1F` made by adding `0x01` blue, `0x02` red, `0x04` green, `0x08` warm white and `0x10` cold white. Quote `"off"`, or YAML may read it as `false` (which also works)
 
 `fastcon_scene` only works on group lights (with `group_id`), since the bulbs only accept this command for a group. Starting an effect sends an "on" to the group first, so it also works from off.
 
-While an effect runs, the group light doesn't send colour or brightness changes, because any steady-colour command ends the effect on the bulbs. Those changes are kept and go out when the effect is stopped: setting the effect back to None sends the group's current colour, and turning the light off always goes out. The members' entities aren't changed when an effect starts.
+While an effect runs, the group light doesn't send color or brightness changes, because any steady-color command ends the effect on the bulbs. Those changes are kept and go out when the effect is stopped: setting the effect back to None sends the group's current color, and turning the light off always goes out. The members' entities aren't changed when an effect starts.
 
 ### Protocol notes
 
@@ -249,6 +251,23 @@ While running the above, open the app and toggle a light on and off. The command
 
 If more than one device is connected to ADB, add `-s <device>` after `adb` (see `adb devices`).
 
+Use the key exactly as printed: it's already in the hex format `mesh_key` expects.
+
+## Troubleshooting
+
+**Bulbs don't respond**, or only respond some of the time:
+
+- **Remove `esp32_ble_tracker:`** unless another component needs it. By default it scans continuously, which takes radio time away from advertising, so bulbs miss most commands. If you do need it, set `scan_parameters: continuous: false`.
+- Check the log for `fastcon.controller` warnings. A warning there means the Bluetooth controller rejected a command, which the log otherwise wouldn't show.
+- Give each command more airtime: raise `adv_duration` (try 100-200), set `repeat_count: 2`, or set `tx_power: 9`.
+- Make sure the brMesh app still controls the bulbs, and that the mesh key is the one the app uses now. Resetting or re-pairing bulbs can create a new mesh.
+
+**Color temperature or white does nothing.** The bulbs may not have those LEDs. If the brMesh app only shows a color wheel (plus at most one "white" preset), set `supports_color_temperature: false`. If it has no white at all, set `supports_white: false`. See [Fastcon Light](#fastcon-light).
+
+**Which `light_id` is which bulb?** Lights are usually numbered 1, 2, 3, … in the order they were added in the brMesh app. Turning each one on from ESPHome is the quickest way to check.
+
+**An entity shows a different color than the bulb.** Bulbs don't report their state, so Home Assistant shows what ESPHome last sent. A color changed in the brMesh app won't appear in Home Assistant.
+
 ## Acknowledgments
 
 This component builds upon the reverse engineering and hard work of several others who must be acknowledged and thanked:
@@ -257,7 +276,20 @@ This component builds upon the reverse engineering and hard work of several othe
 
 The foundational protocol reverse engineering work was done by [Mooody](https://mooody.me/posts/2023-04/reverse-the-fastcon-ble-protocol/), who provided detailed analysis of the Fastcon BLE protocol, including packet structure and encryption methods. https://mooody.me/posts/2023-04/reverse-the-fastcon-ble-protocol/
 
-The group control and set-group frame formats were decoded by [leon101noel](https://github.com/leon101noel) and independently confirmed by [oriolfda](https://github.com/oriolfda/esphome-fastcon).
+The group control, set-group and built-in effect frame formats were decoded by [leon101noel](https://github.com/leon101noel), and the group format was independently confirmed by [oriolfda](https://github.com/oriolfda/esphome-fastcon).
+
+### Contributors
+
+Thank you to everyone who kept this project going with pull requests, forks and bug reports:
+
+- [leon101noel](https://github.com/leon101noel): group control, the bulbs' built-in effects, the plain turn-on and white mode fixes, and the one-command-per-light queue with `repeat_count` (#12, #13, #14)
+- [pascal1404](https://github.com/pascal1404): the compile fix for newer ESPHome versions (#8)
+- [codeclinic](https://github.com/codeclinic): the Windows mesh key instructions (#5), and detailed bug reports and testing
+- [oriolfda](https://github.com/oriolfda/esphome-fastcon): an independent group control implementation that confirmed the frame format
+- [brownnath2000](https://github.com/brownnath2000/esphome-fastcon-repeat): per-light color capability flags, the basis for `supports_rgb` / `supports_white`
+- [hoogiesngrinderz](https://github.com/hoogiesngrinderz/esphome-fastcon-repeat): sending commands more than once for bulbs that miss them
+- [zentik-fr](https://github.com/zentik-fr/esphome-brmesh): research into effects and the white mode payload
+- [tofuweasel](https://github.com/tofuweasel/esphome-fastcon), building on [scross01](https://github.com/scross01/esphome-fastcon) and [brett-todd](https://github.com/brett-todd/esphome-fastcon): a fork that kept builds working for many users, plus native pairing work
 
 ### Implementation References
 

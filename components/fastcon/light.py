@@ -142,7 +142,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_EFFECTS): _validate_effects,
             # Which LEDs the bulb has. RGB-only bulbs set supports_white: false,
             # white-only bulbs set supports_rgb: false, and bulbs with a single white
-            # (no adjustable colour temperature) set supports_color_temperature: false.
+            # (no adjustable color temperature) set supports_color_temperature: false.
             cv.Optional(CONF_SUPPORTS_RGB, default=True): cv.boolean,
             cv.Optional(CONF_SUPPORTS_WHITE, default=True): cv.boolean,
             cv.Optional(CONF_SUPPORTS_COLOR_TEMPERATURE, default=True): cv.boolean,

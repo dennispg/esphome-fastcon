@@ -258,9 +258,9 @@ namespace esphome
                     light_data[5] = 0x7f;
                     return light_data;
                 }
-                // No colour chosen yet (e.g. a plain "turn on" after the controller
+                // No color chosen yet (e.g. a plain "turn on" after the controller
                 // restarted). Send the short "on + brightness" command so the bulb keeps its own
-                // last colour. Sending every colour channel as 0 here would light the bulb "black".
+                // last color. Sending every color channel as 0 here would light the bulb "black".
                 return std::vector<uint8_t>({on_brightness});
             }
 
@@ -420,7 +420,7 @@ namespace esphome
                      (unsigned) steps.size(), jiffies, vector_to_hex_string(inner).c_str());
 
             // Make sure the bulbs are on first: a group command with 1 byte of light data, on at full
-            // brightness, which keeps their colour.
+            // brightness, which keeps their color.
             std::vector<uint8_t> on(12, 0);
             on[0] = 0x43; // ((1+3)<<4)|3
             on[1] = 0x2A;

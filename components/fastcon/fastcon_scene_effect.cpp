@@ -10,8 +10,8 @@ namespace esphome
 
         // LightState calls start() and stop() from LightCall::perform(), and then always writes the
         // state on its next loop: set_immediately_() or start_transition_() follow both
-        // start_effect_() and stop_effect_(). So stop() only has to lift the hold on steady-colour
-        // writes, and that write sends the steady colour.
+        // start_effect_() and stop_effect_(). So stop() only has to lift the hold on steady-color
+        // writes, and that write sends the steady color.
 
         void FastconSceneEffect::start()
         {
