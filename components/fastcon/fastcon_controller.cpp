@@ -4,6 +4,7 @@
 #include "esphome/core/log.h"
 #include "esphome/components/light/color_mode.h"
 #include "fastcon_controller.h"
+#include "fastcon_light.h"
 #include "protocol.h"
 
 namespace esphome
@@ -158,7 +159,7 @@ namespace esphome
             }
         }
 
-        std::vector<uint8_t> FastconController::get_light_data(light::LightState *state)
+        std::vector<uint8_t> FastconController::get_light_data(const light::LightColorValues &values)
         {
             std::vector<uint8_t> light_data = {
                 0, // 0 - On/Off Bit + 7-bit Brightness
@@ -168,8 +169,6 @@ namespace esphome
                 0, // 4 - Warm byte
                 0  // 5 - Cold byte
             };
-
-            auto values = state->current_values;
 
             bool is_on = values.is_on();
             if (!is_on)
@@ -302,6 +301,105 @@ namespace esphome
             // Prepare the final payload with RF protocol formatting
             std::vector<uint8_t> addr = {DEFAULT_BLE_FASTCON_ADDRESS.begin(), DEFAULT_BLE_FASTCON_ADDRESS.end()};
             return prepare_payload(addr, body);
+        }
+
+        void FastconController::drop_queued_(const std::vector<uint8_t> &light_ids, std::initializer_list<uint32_t> keys)
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
+                                        [&](const Command &c)
+                                        {
+                                            return std::find(keys.begin(), keys.end(), c.light_id) != keys.end() ||
+                                                   std::find(light_ids.begin(), light_ids.end(), c.light_id) != light_ids.end();
+                                        }),
+                         queue_.end());
+        }
+
+        // ---- Group control and built-in effects, decoded from the BRmesh app's Broadlink library
+        // (package_broadcast_control, package_groupId_scene_control, package_device_groupId). All use
+        // command type 5 and the same packet format as single control; only the inner payload differs.
+
+        void FastconController::send_group(uint8_t group_id, const std::vector<uint8_t> &light_data,
+                                           const std::vector<uint8_t> &member_light_ids)
+        {
+            // inner: ((len+3)<<4)|3, device type 0xA82A (lights, little-endian), group id, light data
+            std::vector<uint8_t> inner(12, 0);
+            inner[0] = static_cast<uint8_t>(((light_data.size() + 3) << 4) | 3);
+            inner[1] = 0x2A;
+            inner[2] = 0xA8;
+            inner[3] = group_id;
+            std::copy(light_data.begin(), light_data.end(), inner.begin() + 4);
+            ESP_LOGD(TAG, "Group %u: %s", group_id, vector_to_hex_string(light_data).c_str());
+
+            // The group command supersedes anything still queued for its members (including pending
+            // repeats), so an older single-bulb command can't go out after it and undo it. Likewise a
+            // pending "on" from starting an effect on this group, which would follow this command.
+            drop_queued_(member_light_ids, {GROUP_ON_QUEUE_KEY + group_id});
+            queueCommand(GROUP_QUEUE_KEY + group_id, generate_command(5, 0, inner, true));
+        }
+
+        void FastconController::send_group_scene(uint8_t group_id, bool flash, uint8_t speed, std::vector<uint8_t> steps,
+                                                 const std::vector<uint8_t> &member_light_ids)
+        {
+            if (steps.empty())
+                return;
+            if (steps.size() > 9)
+                steps.resize(9);
+            const int s = std::clamp(static_cast<int>(speed), 1, 100);
+            // Speed in jiffies (1/64 s). The app's flash speed is 200 - 2*(slider-1); fade uses the
+            // slider value directly, inverted here so higher is faster for both.
+            const uint8_t jiffies = static_cast<uint8_t>(flash ? 200 - 2 * (s - 1) : 101 - s);
+            // Mode bit, plus the "grayscale" bit the app always sets, on the first step
+            steps[0] |= (flash ? 0x80 : 0x00) | 0x40;
+
+            // inner: ((k+2)<<4)|0x0C, group id, speed, then the k steps
+            std::vector<uint8_t> inner(12, 0);
+            inner[0] = static_cast<uint8_t>(((steps.size() + 2) << 4) | 0x0C);
+            inner[1] = group_id;
+            inner[2] = jiffies;
+            std::copy(steps.begin(), steps.end(), inner.begin() + 3);
+            ESP_LOGD(TAG, "Group %u effect: %s, %u steps, %u jiffies: %s", group_id, flash ? "flash" : "fade",
+                     (unsigned) steps.size(), jiffies, vector_to_hex_string(inner).c_str());
+
+            // Make sure the bulbs are on first: a group command with 1 byte of light data, on at full
+            // brightness, which keeps their colour.
+            std::vector<uint8_t> on(12, 0);
+            on[0] = 0x43; // ((1+3)<<4)|3
+            on[1] = 0x2A;
+            on[2] = 0xA8;
+            on[3] = group_id;
+            on[4] = 0xFF;
+
+            // Clear this group's slots before queueing, so the "on" always goes out ahead of the effect
+            // (a pending steady command would otherwise be replaced in place, ahead of a newly queued
+            // "on"). With round-robin repeats the effect is still the last thing sent.
+            drop_queued_(member_light_ids, {GROUP_QUEUE_KEY + group_id, GROUP_ON_QUEUE_KEY + group_id});
+            queueCommand(GROUP_ON_QUEUE_KEY + group_id, generate_command(5, 0, on, true));
+            queueCommand(GROUP_QUEUE_KEY + group_id, generate_command(5, 0, inner, true));
+        }
+
+        void FastconController::send_set_group(uint8_t light_id, uint8_t group_id)
+        {
+            // inner: 0x21, bulb address, group id. Sent without the forward bit, as the app does.
+            std::vector<uint8_t> inner(12, 0);
+            inner[0] = 0x21;
+            inner[1] = light_id;
+            inner[2] = group_id;
+            ESP_LOGI(TAG, "Writing group %u into light %u", group_id, light_id);
+            queueCommand(SET_GROUP_QUEUE_KEY + light_id, generate_command(5, light_id, inner, false));
+        }
+
+        void FastconController::assign_members(light::LightState *group)
+        {
+            for (auto *candidate : this->groups_)
+            {
+                if (candidate->get_state() == group)
+                {
+                    candidate->assign_members();
+                    return;
+                }
+            }
+            ESP_LOGE(TAG, "assign_members: '%s' is not a fastcon group light", group->get_name().c_str());
         }
     } // namespace fastcon
 } // namespace esphome

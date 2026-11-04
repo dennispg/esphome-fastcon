@@ -22,8 +22,43 @@ fastcon:
 
 light:
   - platform: fastcon
+    id: test_light_1
     name: "Test Light 1"
     light_id: 1
   - platform: fastcon
+    id: test_light_2
     name: "Test Light 2"
     light_id: 2
+  - platform: fastcon
+    name: "All Lights"
+    group_id: 0
+  - platform: fastcon
+    id: room_group
+    name: "Room Group"
+    group_id: 1
+    members: [test_light_1, test_light_2]
+    effects:
+      - fastcon_scene:
+          name: "Red Flash"
+          mode: flash
+          speed: 60
+          steps: [red, "off"]
+      - fastcon_scene:
+          name: "Rainbow Fade"
+          mode: fade
+          steps: [red, yellow, green, cyan, blue, magenta]
+      - fastcon_scene:
+          name: "Whites"
+          steps: [warm_white, cold_white, 0x18]
+
+button:
+  - platform: template
+    name: "Put light 2 in group 1"
+    on_press:
+      - fastcon.set_group:
+          light_id: 2
+          group_id: 1
+  - platform: template
+    name: "Assign Room Group members"
+    on_press:
+      - fastcon.assign_members: room_group
