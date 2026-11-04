@@ -81,16 +81,18 @@ Once the lights are setup, you can use ADB to connect to your phone and you may 
 ```bash
 adb logcat | { grep -m 1 -o 'jyq_helper: .* payload:.\{24\},[[:space:]]*key:[[:space:]]*.\{8\}' | awk '{print $NF}'; kill -2 $(pgrep -P $$ adb); }
 ```
-or on Windows (Powershell)
-```
-adb -s 192.168.1.101:5555 logcat | Select-String -Pattern 'jyq_helper: .* payload:.{24},\s*key:\s*.{8}' | ForEach-Object {
-    if ($_ -match 'key:\s*(\S{8})') {
-        Write-Output $matches[1]
-    }
-}
+
+or on Windows (PowerShell):
+
+```powershell
+adb logcat | Select-String -Pattern 'jyq_helper: .* payload:.{24},\s*key:\s*.{8}' | ForEach-Object {
+    if ($_ -match 'key:\s*(\S{8})') { $matches[1] }
+} | Select-Object -First 1
 ```
 
-While running the above, open the app and toggle a light on and off. The command should then output your mesh key.
+While running the above, open the app and toggle a light on and off. The command should then output your mesh key. If it keeps running after printing the key, press Ctrl+C.
+
+If more than one device is connected to ADB, add `-s <device>` after `adb` (see `adb devices`).
 
 ## Acknowledgments
 
