@@ -79,6 +79,7 @@ async def to_code(config):
 
     if CONF_GROUP_ID in config:
         cg.add(var.set_group_id(config[CONF_GROUP_ID]))
+        cg.add(controller.register_group(var))
         for member_id in config.get(CONF_MEMBERS, []):
             member = await cg.get_variable(member_id)
             cg.add(var.add_member(member))

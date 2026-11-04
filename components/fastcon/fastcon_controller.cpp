@@ -4,6 +4,7 @@
 #include "esphome/core/log.h"
 #include "esphome/components/light/color_mode.h"
 #include "fastcon_controller.h"
+#include "fastcon_light.h"
 #include "protocol.h"
 
 namespace esphome
@@ -345,6 +346,19 @@ namespace esphome
             inner[2] = group_id;
             ESP_LOGI(TAG, "Writing group %u into light %u", group_id, light_id);
             queueCommand(SET_GROUP_QUEUE_KEY + light_id, generate_command(5, light_id, inner, false));
+        }
+
+        void FastconController::assign_members(light::LightState *group)
+        {
+            for (auto *candidate : this->groups_)
+            {
+                if (candidate->get_state() == group)
+                {
+                    candidate->assign_members();
+                    return;
+                }
+            }
+            ESP_LOGE(TAG, "assign_members: '%s' is not a fastcon group light", group->get_name().c_str());
         }
     } // namespace fastcon
 } // namespace esphome

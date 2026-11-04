@@ -38,6 +38,22 @@ namespace esphome
             this->members_.push_back(static_cast<FastconLight *>(member->get_output()));
         }
 
+        void FastconLight::assign_members()
+        {
+            if (this->group_id_ == 0)
+            {
+                ESP_LOGW(TAG, "Group 0 already reaches every bulb, nothing to assign");
+                return;
+            }
+            if (this->members_.empty())
+            {
+                ESP_LOGW(TAG, "Group %u has no members to assign", this->group_id_);
+                return;
+            }
+            for (auto *member : this->members_)
+                this->controller_->send_set_group(member->get_light_id(), this->group_id_);
+        }
+
         const std::vector<FastconLight *> &FastconLight::get_members_() const
         {
             if (this->members_.empty() && this->group_id_ == 0)

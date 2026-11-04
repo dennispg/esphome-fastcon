@@ -145,12 +145,30 @@ At boot, a group light only restores its own entity's state. It doesn't broadcas
 
 ### Putting bulbs in a group
 
-Groups you set up in the brMesh app work as they are, as long as you use the same group number. You can also write a group into a bulb with the `fastcon.set_group` action. The bulb remembers it, and group `0` removes the bulb from its group:
+The bulbs decide which group broadcasts they obey: each bulb stores a group number. `members` only tells ESPHome which entities to keep in sync. The bulbs never report their group back, so the two have to match.
+
+Groups you set up in the brMesh app work as they are, as long as you use the same group number. Otherwise, press a button with `fastcon.assign_members` once. It writes the group's number into every bulb in its `members`:
 
 ```yaml
+light:
+  - platform: fastcon
+    id: living_room
+    name: "Living Room"
+    group_id: 1
+    members: [living_room_1, living_room_2]
+
 button:
   - platform: template
-    name: "Put Living Room 2 in group 1"
+    name: "Assign Living Room bulbs to their group"
+    on_press:
+      - fastcon.assign_members: living_room
+```
+
+The bulbs remember their group, so you only need to press it again after changing `members`. It isn't known yet whether a bulb can belong to more than one group, so assigning a bulb to a new group may take it out of its old one. If a bulb doesn't respond, press it again, or set `repeat_count` on the controller.
+
+To write a group into a single bulb, use `fastcon.set_group`. Group `0` removes the bulb from its group:
+
+```yaml
     on_press:
       - fastcon.set_group:
           light_id: 2
