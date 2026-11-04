@@ -55,6 +55,7 @@ namespace esphome
             uint8_t light_id_;
 
             bool is_group_{false};
+            bool boot_write_pending_{true};
             uint8_t group_id_{0};
             std::vector<FastconLight *> members_;
 

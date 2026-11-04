@@ -141,6 +141,8 @@ light:
 
 When a group light changes, its new state is mirrored onto its members' entities without sending anything more to those bulbs, so Home Assistant stays in sync. A group without `members` still controls its bulbs, but their entities won't follow along (except group `0`, which mirrors to every single-bulb light).
 
+At boot, a group light only restores its own entity's state. It doesn't broadcast it, so each bulb keeps its own restored state.
+
 ### Putting bulbs in a group
 
 Groups you set up in the brMesh app work as they are, as long as you use the same group number. You can also write a group into a bulb with the `fastcon.set_group` action. The bulb remembers it, and group `0` removes the bulb from its group:

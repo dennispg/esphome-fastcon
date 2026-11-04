@@ -72,6 +72,15 @@ namespace esphome
 
             if (this->is_group_)
             {
+                if (this->boot_write_pending_)
+                {
+                    // The first write is ESPHome restoring the group entity's state at boot. Broadcasting
+                    // it would override every member bulb's own restored state, so only the entity is restored.
+                    this->boot_write_pending_ = false;
+                    ESP_LOGD(TAG, "Group %u: not sending the restored boot state", this->group_id_);
+                    return;
+                }
+
                 const auto &members = this->get_members_();
                 std::vector<uint8_t> member_ids;
                 member_ids.reserve(members.size());
