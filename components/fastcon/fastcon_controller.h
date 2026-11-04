@@ -11,6 +11,7 @@ namespace esphome
 {
     namespace fastcon
     {
+        class FastconLight;
 
         class FastconController : public Component
         {
@@ -53,6 +54,21 @@ namespace esphome
             void set_adv_duration(uint16_t val) { adv_duration_ = val; }
             void set_adv_gap(uint16_t val) { adv_gap_ = val; }
 
+            // ---- Group control and the bulbs' built-in effects ----
+            // Group the "all lights" entity talks to. 0 is the app's "All" group.
+            void set_group_id(uint8_t gid) { group_id_ = gid; }
+            uint8_t get_group_id() const { return group_id_; }
+            // One broadcast that every bulb in the group obeys: 1- or 6-byte light data, as for single control
+            void send_group(const std::vector<uint8_t> &light_data);
+            // Built-in effect run by the bulbs themselves. statuses: up to 9 steps, each a bit set of
+            // 0x01 blue, 0x02 red, 0x04 green, 0x08 warm, 0x10 cold (0x00 = off). speed 1-100, higher = faster.
+            void send_group_scene(bool flash, float speed, std::vector<uint8_t> statuses);
+            // Store a group number in one bulb (kept by the bulb; 0 removes it from its group)
+            void send_set_group(uint8_t light_id, uint8_t gid);
+            // Individual lights, so a group command can update their state in Home Assistant
+            void register_member(FastconLight *light) { members_.push_back(light); }
+            void mirror_to_members(const light::LightColorValues &values);
+
         protected:
             // One pending command per light. A newer command for the same light
             // replaces the older one in place, so stale states never queue up behind each other.
@@ -67,6 +83,12 @@ namespace esphome
             mutable std::mutex queue_mutex_;
             size_t max_queue_size_{100};
             uint8_t repeat_count_{1};
+            uint8_t group_id_{0};
+            std::vector<FastconLight *> members_;
+            // Queue keys outside the 1-255 light ids, so group frames get their own "newest wins" slot
+            static constexpr uint32_t GROUP_QUEUE_KEY = 0x10000;
+            static constexpr uint32_t SET_GROUP_QUEUE_KEY = 0x20000;
+            static constexpr uint32_t GROUP_ON_QUEUE_KEY = 0x10001;
 
             enum class AdvertiseState
             {

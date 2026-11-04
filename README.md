@@ -17,6 +17,8 @@ Be warned - there is also a brLight app, which might look like brMesh, but the p
 - Brightness control
 - RGB color control
 - White mode
+- Group control (all bulbs change at the same instant)
+- The bulbs' built-in effects (flash and fade sequences)
 
 ## Configuration
 
@@ -103,6 +105,71 @@ Note: the ESP32's Bluetooth stack rejects advertising intervals below 0x20, so v
 - **name** (*Required*, string): The name for the light entity
 - **id** (*Optional*, ID): The ID to use for this light component
 - **controller_id** (*Optional*, ID): The ID of the controller to use. Defaults to "fastcon_controller"
+
+## Group Control and Built-in Effects
+
+The bulbs store a group number, and a group command is a single broadcast that every bulb in the group obeys, so they all change at the same instant instead of one after another. Group `0` is the brMesh app's "All" group and reaches every bulb with no setup.
+
+Add a light with `group: true` to control the whole group as one entity. Its state is mirrored onto the individual lights' entities (without sending anything to them), so Home Assistant stays in sync:
+
+```yaml
+light:
+  - platform: fastcon
+    id: all_lights
+    name: "All Lights"
+    group: true                     # one group command instead of a single bulb
+    default_transition_length: 0s
+    effects:                        # the bulbs' own built-in effects, see below
+      - lambda:
+          name: "Red flash"
+          update_interval: 1h
+          lambda: |-
+            if (initial_run) id(fastcon_controller).send_group_scene(true, id(effect_speed).state, {0x02, 0x00});
+      - lambda:
+          name: "Full colour fade"
+          update_interval: 1h
+          lambda: |-
+            if (initial_run) id(fastcon_controller).send_group_scene(false, id(effect_speed).state, {0x02, 0x03, 0x01, 0x05, 0x04, 0x06});
+  - platform: fastcon
+    name: "Light 1"
+    light_id: 1
+    default_transition_length: 0s
+
+number:
+  - platform: template
+    id: effect_speed
+    name: "Effect Speed"            # 1-100, higher is faster; read when an effect starts
+    min_value: 1
+    max_value: 100
+    step: 1
+    initial_value: 60
+    optimistic: true
+    restore_value: true
+```
+
+The group light addresses group 0 by default. To use another group, call `id(fastcon_controller).set_group_id(n)` (for example from a template `number`), and write the group into each bulb with `id(fastcon_controller).send_set_group(light_id, n)`. The bulb stores it; `0` removes it from its group.
+
+### Built-in effects
+
+`send_group_scene(flash, speed, steps)` starts one of the bulbs' own effects: one command, after which the bulbs run the effect by themselves with no further Bluetooth traffic. It keeps running until the next command (choosing another colour, turning off, or setting the effect to None).
+
+- **flash**: `true` jumps between the steps, `false` fades between them.
+- **speed**: 1-100, higher is faster.
+- **steps**: up to 9 colours, each a combination of `0x01` blue, `0x02` red, `0x04` green, `0x08` warm white, `0x10` cold white, or `0x00` off. For example `{0x02, 0x00}` is a red flash, `{0x02, 0x01}` alternates red and blue, and `{0x06, 0x03}` fades between yellow and purple.
+
+Starting an effect also sends an "on" first, so it works from off. While an effect runs, the group light doesn't send steady-colour updates (they would cancel it), and stopping the effect sends the steady colour again.
+
+### Protocol notes
+
+These layouts were worked out by analysing the brMesh Android app (5.92), for interoperability with the author's own lights. All use command type 5 and the same packet format as single-light control; only the inner payload differs:
+
+| Command | Inner payload |
+|---|---|
+| Group control | `((len+3)<<4)\|3`, `2A A8` (light device type), group, then 1- or 6-byte light data |
+| Built-in effect | `((k+2)<<4)\|0x0C`, group, speed (in 1/64 s ticks), then k steps (first step `\| 0x40`, plus `\| 0x80` for flash) |
+| Set a bulb's group | `21`, light id, group (forward bit clear) |
+
+Group numbers 253-255 are reserved by the app (temporary groups), and 193-252 are used for its sensor groups.
 
 ## Finding Your Mesh Key
 
