@@ -54,6 +54,49 @@ namespace esphome
             ESP_LOGCONFIG(TAG, "  Advertisement duration: %dms", this->adv_duration_);
             ESP_LOGCONFIG(TAG, "  Advertisement gap: %dms", this->adv_gap_);
             ESP_LOGCONFIG(TAG, "  Sends per command: %d", this->repeat_count_);
+            if (this->has_tx_power_)
+            {
+                ESP_LOGCONFIG(TAG, "  TX power level: %d", (int) this->tx_power_);
+            }
+            else
+            {
+                ESP_LOGCONFIG(TAG, "  TX power: Bluetooth stack default (level %d)",
+                              (int) esp_ble_tx_power_get(ESP_BLE_PWR_TYPE_ADV));
+            }
+        }
+
+        void FastconController::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
+        {
+            switch (event)
+            {
+            case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
+                if (param->adv_data_raw_cmpl.status != ESP_BT_STATUS_SUCCESS)
+                {
+                    ESP_LOGW(TAG, "Bluetooth controller rejected the advertising data (status %d)",
+                             (int) param->adv_data_raw_cmpl.status);
+                }
+                break;
+            case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
+                if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS)
+                {
+                    ESP_LOGW(TAG, "Bluetooth controller failed to start advertising (status %d)",
+                             (int) param->adv_start_cmpl.status);
+                }
+                else
+                {
+                    ESP_LOGV(TAG, "Bluetooth controller confirmed advertising started");
+                }
+                break;
+            case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
+                if (param->adv_stop_cmpl.status != ESP_BT_STATUS_SUCCESS)
+                {
+                    ESP_LOGW(TAG, "Bluetooth controller failed to stop advertising (status %d)",
+                             (int) param->adv_stop_cmpl.status);
+                }
+                break;
+            default:
+                break;
+            }
         }
 
         void FastconController::loop()
@@ -97,6 +140,21 @@ namespace esphome
                     .channel_map = ADV_CHNL_ALL,
                     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
                 };
+
+                // Applied on first use rather than in setup(), so the Bluetooth stack is certainly up
+                if (this->has_tx_power_ && !this->tx_power_applied_)
+                {
+                    esp_err_t power_err = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, this->tx_power_);
+                    if (power_err != ESP_OK)
+                    {
+                        ESP_LOGW(TAG, "Setting advertising TX power failed: %s", esp_err_to_name(power_err));
+                    }
+                    else
+                    {
+                        ESP_LOGD(TAG, "Advertising TX power set (level %d)", (int) this->tx_power_);
+                    }
+                    this->tx_power_applied_ = true;
+                }
 
                 uint8_t adv_data_raw[31] = {0};
                 uint8_t adv_data_len = 0;

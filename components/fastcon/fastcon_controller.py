@@ -1,9 +1,8 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
-from esphome.components import light
+from esphome.components import esp32_ble, light
 from esphome.const import CONF_ID, CONF_LIGHT_ID
-from esphome.core import HexInt
 
 DEPENDENCIES = ["esp32_ble"]
 
@@ -16,6 +15,20 @@ CONF_MAX_QUEUE_SIZE = "max_queue_size"
 CONF_REPEAT_COUNT = "repeat_count"
 CONF_GROUP_ID = "group_id"
 CONF_GROUP = "group"
+CONF_TX_POWER = "tx_power"
+
+esp_power_level_t = cg.global_ns.enum("esp_power_level_t")
+# Advertising TX power in dBm
+TX_POWER_LEVELS = {
+    -12: esp_power_level_t.ESP_PWR_LVL_N12,
+    -9: esp_power_level_t.ESP_PWR_LVL_N9,
+    -6: esp_power_level_t.ESP_PWR_LVL_N6,
+    -3: esp_power_level_t.ESP_PWR_LVL_N3,
+    0: esp_power_level_t.ESP_PWR_LVL_N0,
+    3: esp_power_level_t.ESP_PWR_LVL_P3,
+    6: esp_power_level_t.ESP_PWR_LVL_P6,
+    9: esp_power_level_t.ESP_PWR_LVL_P9,
+}
 
 DEFAULT_ADV_INTERVAL_MIN = 0x20
 DEFAULT_ADV_INTERVAL_MAX = 0x40
@@ -26,16 +39,24 @@ DEFAULT_REPEAT_COUNT = 1
 
 
 def validate_hex_bytes(value):
+    # Returns the key as a normalised 8-character hex string (not a number), so that
+    # cv.sensitive can mask it: it only masks string values.
     if isinstance(value, str):
         value = value.replace(" ", "")
         if len(value) != 8:
             raise cv.Invalid("Mesh key must be exactly 4 bytes (8 hex characters)")
 
         try:
-            return HexInt(int(value, 16))
+            int(value, 16)
         except ValueError as err:
             raise cv.Invalid(f"Invalid hex value: {err}")
+        return value.lower()
     raise cv.Invalid("Mesh key must be a string")
+
+
+# Marks the mesh key as a secret so config dumps and frontends mask it. cv.sensitive is
+# new in ESPHome 2026.x; older versions don't have it and get the plain validator.
+_sensitive = getattr(cv, "sensitive", lambda inner: inner)
 
 
 fastcon_ns = cg.esphome_ns.namespace("fastcon")
@@ -52,7 +73,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ID, default="fastcon_controller"): cv.declare_id(
             FastconController
         ),
-        cv.Required(CONF_MESH_KEY): validate_hex_bytes,
+        cv.GenerateID(esp32_ble.CONF_BLE_ID): cv.use_id(esp32_ble.ESP32BLE),
+        cv.Required(CONF_MESH_KEY): _sensitive(validate_hex_bytes),
+        # Advertising TX power in dBm. Left at the Bluetooth stack's default unless set.
+        cv.Optional(CONF_TX_POWER): cv.enum(TX_POWER_LEVELS, int=True),
         cv.Optional(
             CONF_ADV_INTERVAL_MIN, default=DEFAULT_ADV_INTERVAL_MIN
         ): cv.uint16_t,
@@ -76,8 +100,16 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
+    # Get the Bluetooth controller's advertising start/stop results, which arrive
+    # asynchronously, so a rejected advertisement shows up in the logs
+    ble = await cg.get_variable(config[esp32_ble.CONF_BLE_ID])
+    esp32_ble.register_gap_event_handler(ble, var)
+
+    if CONF_TX_POWER in config:
+        cg.add(var.set_tx_power(config[CONF_TX_POWER]))
+
     if CONF_MESH_KEY in config:
-        mesh_key = config[CONF_MESH_KEY]
+        mesh_key = int(str(config[CONF_MESH_KEY]), 16)
         key_bytes = [(mesh_key >> (i * 8)) & 0xFF for i in range(3, -1, -1)]
         cg.add(var.set_mesh_key(key_bytes))
 

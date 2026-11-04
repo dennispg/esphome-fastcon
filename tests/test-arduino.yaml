@@ -19,6 +19,7 @@ external_components:
 
 fastcon:
   mesh_key: "12345678"
+  tx_power: 9
 
 light:
   - platform: fastcon
