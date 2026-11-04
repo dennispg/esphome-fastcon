@@ -61,6 +61,49 @@ namespace esphome
             return this->members_;
         }
 
+        std::vector<uint8_t> FastconLight::get_member_ids_() const
+        {
+            const auto &members = this->get_members_();
+            std::vector<uint8_t> member_ids;
+            member_ids.reserve(members.size());
+            for (auto *member : members)
+                member_ids.push_back(member->get_light_id());
+            return member_ids;
+        }
+
+        void FastconLight::start_scene(const FastconScene *scene)
+        {
+            this->scene_ = scene;
+            if (this->boot_write_pending_)
+            {
+                // ESPHome restoring the group entity's effect at boot. Like the restored state, it isn't
+                // broadcast: the bulbs keep doing what they were doing (still running it, if only the
+                // controller restarted), and steady-colour writes stay held back until the effect stops.
+                this->scene_sent_ = true;
+                ESP_LOGD(TAG, "Group %u: not sending the restored effect at boot", this->group_id_);
+                return;
+            }
+            this->send_scene_();
+        }
+
+        void FastconLight::stop_scene(const FastconScene *scene)
+        {
+            if (this->scene_ != scene)
+                return;
+            // Nothing to send here. ESPHome writes the state right after stopping an effect (also when
+            // only the effect changed), and with no effect selected that write sends the steady colour,
+            // which ends the effect on the bulbs.
+            this->scene_ = nullptr;
+            ESP_LOGD(TAG, "Group %u: effect stopped", this->group_id_);
+        }
+
+        void FastconLight::send_scene_()
+        {
+            this->controller_->send_group_scene(this->group_id_, this->scene_->flash, this->scene_->speed,
+                                                this->scene_->steps, this->get_member_ids_());
+            this->scene_sent_ = true;
+        }
+
         light::LightTraits FastconLight::get_traits()
         {
             auto traits = light::LightTraits();
@@ -97,14 +140,25 @@ namespace esphome
                     return;
                 }
 
-                const auto &members = this->get_members_();
-                std::vector<uint8_t> member_ids;
-                member_ids.reserve(members.size());
-                for (auto *member : members)
-                    member_ids.push_back(member->get_light_id());
+                if (this->scene_ != nullptr && state->remote_values.is_on())
+                {
+                    if (this->scene_sent_)
+                    {
+                        // The bulbs run the effect by themselves, and a steady-colour command would end it
+                        ESP_LOGV(TAG, "Group %u: effect running, steady colour not sent", this->group_id_);
+                        return;
+                    }
+                    // Turned back on after an off that left the effect selected (e.g. brightness 0): restart it
+                    this->send_scene_();
+                    return;
+                }
+                // Anything else (no effect, or turning off) goes out, and ends an effect on the bulbs
+                this->scene_sent_ = false;
 
                 // One broadcast for every bulb in the group
-                this->controller_->send_group(this->group_id_, light_data, member_ids);
+                this->controller_->send_group(this->group_id_, light_data, this->get_member_ids_());
+
+                const auto &members = this->get_members_();
 
                 // Show the result on the members' entities. Only the end state of a transition is
                 // mirrored, so members don't each run (and send) the intermediate steps.

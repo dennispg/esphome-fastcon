@@ -18,6 +18,14 @@ namespace esphome
             RGB
         };
 
+        // One of the bulbs' built-in effects (see FastconController::send_group_scene)
+        struct FastconScene
+        {
+            bool flash{false};
+            uint8_t speed{50};
+            std::vector<uint8_t> steps;
+        };
+
         class FastconLight : public Component, public light::LightOutput
         {
         public:
@@ -43,6 +51,14 @@ namespace esphome
             void add_member(light::LightState *member);
             // Write this group's number into each declared member bulb (fastcon.assign_members)
             void assign_members();
+            bool is_group() const { return is_group_; }
+
+            // Built-in effects (group lights only), called by FastconSceneEffect. start_scene sends the
+            // effect, and until stop_scene, steady-colour writes are not sent (they would end it on the
+            // bulbs). Turning off still goes out. ESPHome writes the state right after stopping an
+            // effect, and that write sends the steady colour again.
+            void start_scene(const FastconScene *scene);
+            void stop_scene(const FastconScene *scene);
 
             // ---- Single-bulb lights ----
             // Show a group command's result on this bulb's entity. light_data is what the group
@@ -52,6 +68,8 @@ namespace esphome
         protected:
             // Declared members, or every single-bulb light for group 0 with none declared
             const std::vector<FastconLight *> &get_members_() const;
+            std::vector<uint8_t> get_member_ids_() const;
+            void send_scene_();
 
             FastconController *controller_{nullptr};
             light::LightState *state_{nullptr};
@@ -61,6 +79,10 @@ namespace esphome
             bool boot_write_pending_{true};
             uint8_t group_id_{0};
             std::vector<FastconLight *> members_;
+            // The effect selected on this group light, and whether the bulbs are running it
+            // (false after the group was turned off while the effect stayed selected)
+            const FastconScene *scene_{nullptr};
+            bool scene_sent_{false};
 
             std::vector<uint8_t> mirrored_data_;
         };

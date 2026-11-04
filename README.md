@@ -18,6 +18,7 @@ Be warned - there is also a brLight app, which might look like brMesh, but the p
 - RGB color control
 - White mode
 - Group control (all bulbs in a group change at the same instant)
+- The bulbs' built-in effects (flash and fade sequences) on group lights
 
 ## Configuration
 
@@ -105,6 +106,7 @@ Each light is either a single bulb (`light_id`) or a group (`group_id`). Use exa
 - **light_id** (*Optional*, int): The ID of a single bulb (1-255)
 - **group_id** (*Optional*, int): A group number (0-255), controlled with a single broadcast. `0` is the brMesh app's "All" group. See [Group Control](#group-control)
 - **members** (*Optional*, list of light IDs): Group lights only. The single-bulb lights in this group, so their entities follow the group's state. Group `0` without `members` follows every single-bulb light
+- **effects** (*Optional*, list): ESPHome light effects. Group lights can also use the bulbs' own effects with `fastcon_scene`. See [Built-in effects](#built-in-effects)
 - **name** (*Required*, string): The name for the light entity
 - **id** (*Optional*, ID): The ID to use for this light component
 - **controller_id** (*Optional*, ID): The ID of the controller to use. Defaults to "fastcon_controller"
@@ -177,13 +179,44 @@ To write a group into a single bulb, use `fastcon.set_group`. Group `0` removes 
 
 Group numbers 253-255 are reserved by the app (temporary groups), and 193-252 are used for its sensor groups, so pick groups from 1-192.
 
+### Built-in effects
+
+The bulbs have their own flash and fade effects. Starting one takes a single group command, after which the bulbs run it by themselves with no further Bluetooth traffic. Add them to a group light as `fastcon_scene` effects, and pick them from the light's effect list like any other ESPHome effect:
+
+```yaml
+light:
+  - platform: fastcon
+    name: "Living Room"
+    group_id: 1
+    effects:
+      - fastcon_scene:
+          name: "Red Flash"
+          mode: flash
+          speed: 60
+          steps: [red, "off"]
+      - fastcon_scene:
+          name: "Rainbow Fade"
+          mode: fade
+          steps: [red, yellow, green, cyan, blue, magenta]
+```
+
+- **name** (*Optional*, string): The effect's name. Defaults to `Scene`
+- **mode** (*Optional*, `flash` or `fade`): `flash` jumps between the steps, `fade` fades between them. Defaults to `fade`
+- **speed** (*Optional*, int, 1-100): Higher is faster. Defaults to 50
+- **steps** (*Required*, list, 1-9 entries): The colours to go through. Each is one of `off`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta` (or `purple`), `white`, `warm_white`, `cold_white`, or a number from `0x00` to `0x1F` made by adding `0x01` blue, `0x02` red, `0x04` green, `0x08` warm white and `0x10` cold white. Quote `"off"`, or YAML may read it as `false` (which also works)
+
+`fastcon_scene` only works on group lights (with `group_id`), since the bulbs only accept this command for a group. Starting an effect sends an "on" to the group first, so it also works from off.
+
+While an effect runs, the group light doesn't send colour or brightness changes, because any steady-colour command ends the effect on the bulbs. Those changes are kept and go out when the effect is stopped: setting the effect back to None sends the group's current colour, and turning the light off always goes out. The members' entities aren't changed when an effect starts.
+
 ### Protocol notes
 
-These layouts were worked out by analysing the brMesh Android app (5.92), for interoperability with the author's own lights. Both use command type 5 and the same packet format as single-light control; only the inner payload differs:
+These layouts were worked out by analysing the brMesh Android app (5.92), for interoperability with the author's own lights. All use command type 5 and the same packet format as single-light control; only the inner payload differs:
 
 | Command | Inner payload |
 |---|---|
 | Group control | `((len+3)<<4)\|3`, `2A A8` (light device type), group, then 1- or 6-byte light data |
+| Built-in effect | `((k+2)<<4)\|0x0C`, group, speed (in 1/64 s ticks), then k steps (up to 9; first step `\| 0x40`, plus `\| 0x80` for flash) |
 | Set a bulb's group | `21`, light id, group (forward bit clear) |
 
 ## Finding Your Mesh Key

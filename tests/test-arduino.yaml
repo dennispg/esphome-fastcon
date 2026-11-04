@@ -37,6 +37,19 @@ light:
     name: "Room Group"
     group_id: 1
     members: [test_light_1, test_light_2]
+    effects:
+      - fastcon_scene:
+          name: "Red Flash"
+          mode: flash
+          speed: 60
+          steps: [red, "off"]
+      - fastcon_scene:
+          name: "Rainbow Fade"
+          mode: fade
+          steps: [red, yellow, green, cyan, blue, magenta]
+      - fastcon_scene:
+          name: "Whites"
+          steps: [warm_white, cold_white, 0x18]
 
 button:
   - platform: template
