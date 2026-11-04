@@ -108,14 +108,16 @@ namespace esphome
         {
             auto traits = light::LightTraits();
             const bool color_temperature = this->supports_white_ && this->supports_color_temperature_;
+            // No plain BRIGHTNESS mode next to colour modes: Home Assistant doesn't allow mixing them,
+            // and rejects a state reported in brightness mode, so the entity snaps back to off.
             if (this->supports_rgb_ && color_temperature)
             {
-                traits.set_supported_color_modes({light::ColorMode::RGB, light::ColorMode::WHITE, light::ColorMode::BRIGHTNESS, light::ColorMode::COLD_WARM_WHITE});
+                traits.set_supported_color_modes({light::ColorMode::RGB, light::ColorMode::WHITE, light::ColorMode::COLD_WARM_WHITE});
             }
             else if (this->supports_rgb_ && this->supports_white_)
             {
                 // RGB plus a single white (the white mode payload), without colour temperature
-                traits.set_supported_color_modes({light::ColorMode::RGB, light::ColorMode::WHITE, light::ColorMode::BRIGHTNESS});
+                traits.set_supported_color_modes({light::ColorMode::RGB, light::ColorMode::WHITE});
             }
             else if (this->supports_rgb_)
             {
