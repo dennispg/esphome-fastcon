@@ -9,7 +9,6 @@ esp32:
 
 logger:
 
-esp32_ble_tracker:
 esp32_ble_server:
 
 external_components:
