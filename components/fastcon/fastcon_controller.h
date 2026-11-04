@@ -5,6 +5,7 @@
 #include <vector>
 #include "esphome/core/component.h"
 #include "esphome/components/esp32_ble_server/ble_server.h"
+#include "esphome/components/light/light_state.h"
 
 namespace esphome
 {
