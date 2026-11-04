@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
-from esphome.components import light
+from esphome.components import esp32_ble, light
 from esphome.const import CONF_ID, CONF_LIGHT_ID
 from esphome.core import HexInt
 
@@ -16,6 +16,20 @@ CONF_MAX_QUEUE_SIZE = "max_queue_size"
 CONF_REPEAT_COUNT = "repeat_count"
 CONF_GROUP_ID = "group_id"
 CONF_GROUP = "group"
+CONF_TX_POWER = "tx_power"
+
+esp_power_level_t = cg.global_ns.enum("esp_power_level_t")
+# Advertising TX power in dBm
+TX_POWER_LEVELS = {
+    -12: esp_power_level_t.ESP_PWR_LVL_N12,
+    -9: esp_power_level_t.ESP_PWR_LVL_N9,
+    -6: esp_power_level_t.ESP_PWR_LVL_N6,
+    -3: esp_power_level_t.ESP_PWR_LVL_N3,
+    0: esp_power_level_t.ESP_PWR_LVL_N0,
+    3: esp_power_level_t.ESP_PWR_LVL_P3,
+    6: esp_power_level_t.ESP_PWR_LVL_P6,
+    9: esp_power_level_t.ESP_PWR_LVL_P9,
+}
 
 DEFAULT_ADV_INTERVAL_MIN = 0x20
 DEFAULT_ADV_INTERVAL_MAX = 0x40
@@ -52,7 +66,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ID, default="fastcon_controller"): cv.declare_id(
             FastconController
         ),
+        cv.GenerateID(esp32_ble.CONF_BLE_ID): cv.use_id(esp32_ble.ESP32BLE),
         cv.Required(CONF_MESH_KEY): validate_hex_bytes,
+        # Advertising TX power in dBm. Left at the Bluetooth stack's default unless set.
+        cv.Optional(CONF_TX_POWER): cv.enum(TX_POWER_LEVELS, int=True),
         cv.Optional(
             CONF_ADV_INTERVAL_MIN, default=DEFAULT_ADV_INTERVAL_MIN
         ): cv.uint16_t,
@@ -75,6 +92,14 @@ CONFIG_SCHEMA = cv.Schema(
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+
+    # Get the Bluetooth controller's advertising start/stop results, which arrive
+    # asynchronously, so a rejected advertisement shows up in the logs
+    ble = await cg.get_variable(config[esp32_ble.CONF_BLE_ID])
+    esp32_ble.register_gap_event_handler(ble, var)
+
+    if CONF_TX_POWER in config:
+        cg.add(var.set_tx_power(config[CONF_TX_POWER]))
 
     if CONF_MESH_KEY in config:
         mesh_key = config[CONF_MESH_KEY]

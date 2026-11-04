@@ -8,6 +8,8 @@
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
 #include "esphome/components/esp32_ble_server/ble_server.h"
+#include <esp_bt.h>
+#include <esp_gap_ble_api.h>
 #include "esphome/components/light/light_state.h"
 
 namespace esphome
@@ -57,6 +59,16 @@ namespace esphome
             }
             void set_adv_duration(uint16_t val) { adv_duration_ = val; }
             void set_adv_gap(uint16_t val) { adv_gap_ = val; }
+            // Advertising TX power. Left at the Bluetooth stack's default unless set.
+            void set_tx_power(esp_power_level_t level)
+            {
+                tx_power_ = level;
+                has_tx_power_ = true;
+            }
+
+            // Registered with esp32_ble: reports when the Bluetooth controller rejects our advertising
+            // data or start/stop asynchronously (the API calls themselves can still return ESP_OK).
+            void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
 
             // ---- Group control ----
             // One broadcast that every bulb in the group obeys (group 0 is the app's "All" group).
@@ -125,6 +137,9 @@ namespace esphome
             uint16_t adv_interval_max_{0x40};
             uint16_t adv_duration_{50};
             uint16_t adv_gap_{10};
+            esp_power_level_t tx_power_{ESP_PWR_LVL_P9};
+            bool has_tx_power_{false};
+            bool tx_power_applied_{false};
 
             static const uint16_t MANUFACTURER_DATA_ID = 0xfff0;
         };
