@@ -74,11 +74,12 @@ namespace esphome
         protected:
             // Declared members, or every single-bulb light for group 0 with none declared
             const std::vector<FastconLight *> &get_members_() const;
-            // Take values' color as what the bulb already shows (also for a light that is off)
-            void remember_color_(const light::LightColorValues &values);
-            // A full command whose color the bulb already shows becomes the short "on + brightness"
-            // command, so turning on or dimming never sends color, as with the brMesh app. A write that
-            // changes nothing at all (resent) is an explicit request, so it keeps the full color.
+            // Take values' color and brightness as what the bulb already shows (also for a light that is off)
+            void remember_shown_(const light::LightColorValues &values);
+            // A full command whose color and brightness the bulb already shows becomes the short
+            // "on + brightness" command, so a plain on/off never sends color, as with the brMesh app.
+            // Dimming sends the full command, since some bulbs ignore the short command's brightness
+            // (#22). A write that changes nothing at all (resent) is an explicit request, so it stays full.
             std::vector<uint8_t> drop_unchanged_color_(const std::vector<uint8_t> &light_data, bool resent);
             std::vector<uint8_t> get_member_ids_() const;
             void send_scene_();
@@ -100,8 +101,9 @@ namespace esphome
             bool scene_sent_{false};
 
             std::vector<uint8_t> mirrored_data_;
-            // Color bytes (blue, red, green, warm, cold) the bulb is believed to show; empty if unknown
-            std::vector<uint8_t> sent_color_;
+            // Brightness (without the on/off bit) and color bytes (blue, red, green, warm, cold) the
+            // bulb is believed to show; empty if unknown
+            std::vector<uint8_t> shown_;
             // The first write is ESPHome restoring the saved state at boot
             bool baseline_pending_{true};
             // Full light data of the previous write, to recognise a write that changes nothing

@@ -145,25 +145,33 @@ namespace esphome
             return traits;
         }
 
-        void FastconLight::remember_color_(const light::LightColorValues &values)
+        // The brightness and color bytes of a full command, without the on/off bit
+        static std::vector<uint8_t> shown_bytes(const std::vector<uint8_t> &light_data)
+        {
+            std::vector<uint8_t> shown = light_data;
+            shown[0] &= 0x7F;
+            return shown;
+        }
+
+        void FastconLight::remember_shown_(const light::LightColorValues &values)
         {
             auto on_values = values;
             on_values.set_state(true);
             const auto full = this->controller_->get_light_data(on_values);
             if (full.size() == 6)
-                this->sent_color_.assign(full.begin() + 1, full.end());
+                this->shown_ = shown_bytes(full);
             else
-                this->sent_color_.clear();
+                this->shown_.clear();
         }
 
         std::vector<uint8_t> FastconLight::drop_unchanged_color_(const std::vector<uint8_t> &light_data, bool resent)
         {
             if (light_data.size() != 6)
                 return light_data;
-            std::vector<uint8_t> color(light_data.begin() + 1, light_data.end());
-            if (color == this->sent_color_ && !resent)
+            auto shown = shown_bytes(light_data);
+            if (shown == this->shown_ && !resent)
                 return {light_data[0]};
-            this->sent_color_ = std::move(color);
+            this->shown_ = std::move(shown);
             return light_data;
         }
 
@@ -175,13 +183,16 @@ namespace esphome
             auto call = this->state_->make_call();
             if (light_data.size() == 6)
             {
-                // The group command set a color, so the bulb shows it now
-                this->sent_color_.assign(light_data.begin() + 1, light_data.end());
+                // The group command set a color and brightness, so the bulb shows them now
+                this->shown_ = shown_bytes(light_data);
                 call.from_light_color_values(values);
             }
             else
             {
-                // Only on/off or brightness: the bulb kept its own color, so the entity keeps its color too
+                // A plain on/off: the bulb kept its own color, so the entity keeps its color too. A group
+                // "on" carries the group's brightness, which the bulb now has.
+                if (values.is_on() && !this->shown_.empty())
+                    this->shown_[0] = light_data[0] & 0x7F;
                 call.set_state(values.is_on());
                 if (values.is_on())
                     call.set_brightness(values.get_brightness());
@@ -202,10 +213,11 @@ namespace esphome
 
             if (this->baseline_pending_)
             {
-                // The first write is ESPHome restoring the saved state at boot. Its color is taken as what
-                // the bulb already shows (even when restored as off), so a plain "turn on" later keeps it.
+                // The first write is ESPHome restoring the saved state at boot. Its color and brightness are
+                // taken as what the bulb already shows (even when restored as off), so a plain "turn on"
+                // later keeps them.
                 this->baseline_pending_ = false;
-                this->remember_color_(values);
+                this->remember_shown_(values);
             }
 
             if (this->is_group_)
@@ -234,7 +246,7 @@ namespace esphome
                 // Anything else (no effect, or turning off) goes out, and ends an effect on the bulbs.
                 // The steady color after an effect has to go out in full: a short "on" wouldn't end it.
                 if (this->scene_sent_)
-                    this->sent_color_.clear();
+                    this->shown_.clear();
                 this->scene_sent_ = false;
 
                 // One broadcast for every bulb in the group
