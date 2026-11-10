@@ -1,0 +1,31 @@
+# Compile-only test of examples/music-sync, microphone side (used by CI). Not meant to be flashed.
+esphome:
+  name: fastcon-test-music-mic
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: "test"
+  password: "testtest1"
+
+i2s_audio:
+  i2s_lrclk_pin: GPIO25
+  i2s_bclk_pin: GPIO26
+
+microphone:
+  - platform: i2s_audio
+    id: test_mic
+    i2s_din_pin: GPIO33
+    adc_type: external
+
+packages:
+  music_mic: !include
+    file: ../examples/music-sync/mic-device.yaml
+    vars:
+      microphone: test_mic
+      controller_ip: 192.168.1.50

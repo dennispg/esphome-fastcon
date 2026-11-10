@@ -1,0 +1,130 @@
+# Music sync, controller side. Add this to the fastcon controller, together with music_sync.h.
+# Loudness readings from the mic device (mic-device.yaml) arrive over UDP. The beat engine turns
+# each into a brightness and color, and the group gets one command whenever the look changes
+# noticeably: about 14 a second for loud music, 1 a second in silence.
+#
+#   esphome:
+#     includes:
+#       - music-sync/music_sync.h
+#
+#   packages:
+#     music_sync: !include
+#       file: music-sync/controller.yaml
+#       vars:
+#         group_light: living_room   # id of a fastcon group light
+#         group_id: 1                # that light's group_id
+#
+# The group light's own effects (fastcon_scene, fastcon_colors, ...) take priority: music sync pauses
+# while one runs.
+
+globals:
+  - id: music_last_rms
+    type: float
+    initial_value: 'NAN'
+  - id: music_last_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: music_stale_sent
+    type: bool
+    initial_value: 'false'
+
+udp:
+  id: music_udp
+  on_receive:
+    then:
+      - lambda: |-
+          // "MS", a counter, then RMS and peak as -dB x2 (0 = loudest, 254 = quiet, 255 = no reading)
+          if (data.size() < 5 || data[0] != 'M' || data[1] != 'S') return;
+          const float rms = data[3] == 255 ? NAN : -data[3] / 2.0f;
+          const float peak = data[4] == 255 ? NAN : -data[4] / 2.0f;
+          id(music_last_rms) = rms;
+          id(music_last_ms) = millis();
+          if (!id(music_sync).state) return;
+          if (id(${group_light}).get_effect_name() != "None") return;
+          auto frame = music_engine().update(rms, peak, millis(), id(music_sensitivity).state,
+                                             id(music_max_brightness).state,
+                                             (int) id(music_palette).active_index().value_or(0));
+          if (frame.send)
+            id(fastcon_controller).send_group(
+                ${group_id}, std::vector<uint8_t>{(uint8_t) (0x80 | frame.bri), frame.b, frame.r, frame.g, 0, 0}, {});
+
+switch:
+  - platform: template
+    id: music_sync
+    name: "Music Sync"
+    icon: mdi:music-note
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_off_action:
+      # Put the group back to what its light entity shows (unless one of its effects took over)
+      - lambda: |-
+          if (id(${group_light}).get_effect_name() == "None")
+            id(fastcon_controller).send_group(
+                ${group_id}, id(fastcon_controller).get_light_data(id(${group_light}).remote_values), {});
+
+select:
+  - platform: template
+    id: music_palette
+    name: "Music Palette"
+    icon: mdi:palette
+    optimistic: true
+    restore_value: true
+    initial_option: Rainbow
+    options:
+      - Rainbow
+      - Party
+      - Fire
+      - Ocean
+      - Toxic
+      - Alarm
+
+number:
+  # How readily the lights react: higher reacts to quieter sound and smaller beats
+  - platform: template
+    id: music_sensitivity
+    name: "Music Sensitivity"
+    icon: mdi:tune-vertical
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+    min_value: 0
+    max_value: 100
+    step: 5
+  - platform: template
+    id: music_max_brightness
+    name: "Music Max Brightness"
+    icon: mdi:brightness-6
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    min_value: 10
+    max_value: 100
+    step: 5
+
+sensor:
+  # What the controller hears from the mic device (blank when nothing arrives)
+  - platform: template
+    id: music_level
+    name: "Music Level"
+    icon: mdi:waveform
+    unit_of_measurement: dB
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: |-
+      if (millis() - id(music_last_ms) > 2000) return NAN;
+      return id(music_last_rms);
+
+interval:
+  # If the readings stop (mic switched off, device offline), put the group back once
+  - interval: 1s
+    then:
+      - lambda: |-
+          const bool stale = millis() - id(music_last_ms) > 3000;
+          if (id(music_sync).state && stale && !id(music_stale_sent)) {
+            if (id(${group_light}).get_effect_name() == "None")
+              id(fastcon_controller).send_group(
+                  ${group_id}, id(fastcon_controller).get_light_data(id(${group_light}).remote_values), {});
+            id(music_stale_sent) = true;
+          }
+          if (!stale) id(music_stale_sent) = false;

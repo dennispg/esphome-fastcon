@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [test-arduino, test-esp-idf]
+        config: [test-arduino, test-esp-idf, test-music-sync, test-music-mic]
         channel: [stable, beta]
     steps:
       - uses: actions/checkout@v4

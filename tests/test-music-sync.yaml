@@ -1,0 +1,49 @@
+# Compile-only test of examples/music-sync, controller side (used by CI). Not meant to be flashed.
+esphome:
+  name: fastcon-test-music-sync
+  includes:
+    - ../examples/music-sync/music_sync.h
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: "test"
+  password: "testtest1"
+
+esp32_ble_server:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+fastcon:
+  mesh_key: "12345678"
+
+light:
+  - platform: fastcon
+    id: test_light_1
+    name: "Test Light 1"
+    light_id: 1
+  - platform: fastcon
+    id: room_group
+    name: "Room Group"
+    group_id: 1
+    members: [test_light_1]
+    effects:
+      - fastcon_scene:
+          name: "Red Flash"
+          mode: flash
+          steps: [red, "off"]
+
+packages:
+  music_sync: !include
+    file: ../examples/music-sync/controller.yaml
+    vars:
+      group_light: room_group
+      group_id: 1
