@@ -277,6 +277,10 @@ If more than one device is connected to ADB, add `-s <device>` after `adb` (see 
 
 Use the key exactly as printed: it's already in the hex format `mesh_key` expects.
 
+## Music sync
+
+A group can pulse and change color with the music in the room, using any ESPHome device with a microphone: a voice satellite, a speaker board, or an ESP32 with an I2S mic. The mic device sends the room's loudness straight to the controller over UDP, and a beat engine on the controller drives the group, with palette, sensitivity and brightness controls. It's an example to add to your own configs, not part of the component: see [examples/music-sync](examples/music-sync/README.md).
+
 ## Troubleshooting
 
 **Bulbs don't respond**, or only respond some of the time:

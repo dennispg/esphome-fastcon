@@ -1,0 +1,67 @@
+# Music sync, microphone side. Add this to an ESPHome device that has a microphone (a voice
+# assistant satellite, a speaker board, an ESP32 with an I2S mic). It measures the room's loudness
+# 20 times a second and sends each reading straight to the fastcon controller as one small UDP
+# packet, without going through Home Assistant. Only loudness leaves the device, never audio.
+#
+#   packages:
+#     music_mic: !include
+#       file: music-sync/mic-device.yaml
+#       vars:
+#         microphone: my_mic             # id of the device's microphone
+#         controller_ip: 192.168.1.50    # the fastcon controller (reserve this address in your router)
+#
+# The "Music Mic" switch starts and stops the measuring. It works alongside a wake word on the same
+# microphone: the mic keeps running while anything still uses it.
+
+udp:
+  id: music_udp
+  addresses:
+    - ${controller_ip}
+
+switch:
+  - platform: template
+    id: music_mic
+    name: "Music Mic"
+    icon: mdi:microphone-message
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - sound_level.start: music_sound_level
+    turn_off_action:
+      - sound_level.stop: music_sound_level
+
+sensor:
+  - platform: sound_level
+    id: music_sound_level
+    microphone:
+      microphone: ${microphone}
+    passive: false
+    measurement_duration: 50ms
+    peak:
+      id: music_peak_db
+      internal: true
+    rms:
+      id: music_rms_db
+      internal: true
+      on_value:
+        - udp.write:
+            id: music_udp
+            # "MS", a counter, then RMS and peak as -dB x2 (0 = loudest, 254 = quiet, 255 = no reading)
+            data: !lambda |-
+              auto q = [](float db) -> uint8_t {
+                if (std::isnan(db)) return 255;
+                return (uint8_t) std::clamp((int) std::lround(-db * 2.0f), 0, 254);
+              };
+              static uint8_t counter = 0;
+              return std::vector<uint8_t>{'M', 'S', counter++, q(x), q(id(music_peak_db).state)};
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        # The sound level sensor starts the mic by itself at power-up; keep it off unless Music Mic is on
+        - if:
+            condition:
+              switch.is_off: music_mic
+            then:
+              - sound_level.stop: music_sound_level
