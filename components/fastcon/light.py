@@ -9,6 +9,8 @@ from esphome.components import light
 from esphome.components.light.effects import MONOCHROMATIC_EFFECTS, register_effect
 from esphome.components.light.types import LightEffect
 from esphome.const import (
+    CONF_BRIGHTNESS,
+    CONF_COLORS,
     CONF_EFFECTS,
     CONF_LIGHT_ID,
     CONF_MODE,
@@ -32,6 +34,7 @@ CONF_SUPPORTS_RGB = "supports_rgb"
 CONF_SUPPORTS_WHITE = "supports_white"
 CONF_SUPPORTS_COLOR_TEMPERATURE = "supports_color_temperature"
 CONF_FASTCON_SCENE = "fastcon_scene"
+CONF_FASTCON_COLORS = "fastcon_colors"
 CONF_STEPS = "steps"
 
 fastcon_ns = cg.esphome_ns.namespace("fastcon")
@@ -103,11 +106,81 @@ async def fastcon_scene_effect_to_code(config, effect_id):
     return var
 
 
+# Custom-color effect (the brMesh app's "RGB mode"): up to 4 colors, or 3 with a brightness
+COLORS_MAX = 4
+COLORS_MAX_WITH_BRIGHTNESS = 3
+
+
+def _validate_color(value):
+    if isinstance(value, str):
+        digits = value.strip().removeprefix("#")
+        if len(digits) == 6:
+            try:
+                number = int(digits, 16)
+            except ValueError:
+                pass
+            else:
+                return [(number >> 16) & 0xFF, (number >> 8) & 0xFF, number & 0xFF]
+    elif isinstance(value, list) and len(value) == 3:
+        return [cv.int_range(min=0, max=255)(channel) for channel in value]
+    raise cv.Invalid(
+        f"Unknown color {value!r}. Use a quoted hex color such as \"#FF8000\", "
+        "or [red, green, blue] with each 0-255"
+    )
+
+
+def _validate_colors_count(config):
+    if CONF_BRIGHTNESS in config and len(config[CONF_COLORS]) > COLORS_MAX_WITH_BRIGHTNESS:
+        raise cv.Invalid(
+            f"With a brightness, an effect has 1 to {COLORS_MAX_WITH_BRIGHTNESS} colors",
+            [CONF_COLORS],
+        )
+    return config
+
+
+# The bulbs' custom-color flash/fade effect. Like fastcon_scene, the bulbs run it by themselves
+# after a single group command, so it is only allowed on fastcon group lights.
+@register_effect(
+    CONF_FASTCON_COLORS,
+    FastconSceneEffect,
+    "Colors",
+    {
+        cv.Optional(CONF_MODE, default="fade"): cv.one_of("flash", "fade", lower=True),
+        # 1-100, higher is faster
+        cv.Optional(CONF_SPEED, default=50): cv.int_range(min=1, max=100),
+        cv.Required(CONF_COLORS): cv.All(
+            cv.ensure_list(_validate_color),
+            cv.Length(
+                min=1,
+                max=COLORS_MAX,
+                msg=f"An effect has 1 to {COLORS_MAX} colors",
+            ),
+        ),
+        # Uses the newer form of the command, which also sets the bulbs' brightness
+        cv.Optional(CONF_BRIGHTNESS): cv.All(
+            cv.percentage, cv.Range(min=0.01, msg="Use a brightness from 1% to 100%")
+        ),
+    },
+    _validate_colors_count,
+)
+async def fastcon_colors_effect_to_code(config, effect_id):
+    var = cg.new_Pvariable(effect_id, config[CONF_NAME])
+    cg.add(var.set_flash(config[CONF_MODE] == "flash"))
+    cg.add(var.set_speed(config[CONF_SPEED]))
+    for red, green, blue in config[CONF_COLORS]:
+        cg.add(var.add_color(red, green, blue))
+    if CONF_BRIGHTNESS in config:
+        cg.add(var.set_brightness(max(1, round(config[CONF_BRIGHTNESS] * 127))))
+    return var
+
+
 def _validate_effects(value):
-    # The usual brightness-light effects, plus fastcon_scene. That one is registered on its own
-    # (not in the shared lists), so other light platforms don't accept it. The list is built when
-    # validating, so effects that other components register later are included.
-    return light.validate_effects([*MONOCHROMATIC_EFFECTS, CONF_FASTCON_SCENE])(value)
+    # The usual brightness-light effects, plus fastcon_scene and fastcon_colors. Those are registered
+    # on their own (not in the shared lists), so other light platforms don't accept them. The list is
+    # built when validating, so effects that other components register later are included.
+    return light.validate_effects(
+        [*MONOCHROMATIC_EFFECTS, CONF_FASTCON_SCENE, CONF_FASTCON_COLORS]
+    )(value)
 
 
 def _validate_members_need_group(config):
@@ -123,11 +196,12 @@ def _validate_scenes_need_group(config):
     if CONF_GROUP_ID in config:
         return config
     for i, effect in enumerate(config.get(CONF_EFFECTS, [])):
-        if CONF_FASTCON_SCENE in effect:
-            raise cv.Invalid(
-                "fastcon_scene effects only work on a group light (one with group_id)",
-                [CONF_EFFECTS, i],
-            )
+        for kind in (CONF_FASTCON_SCENE, CONF_FASTCON_COLORS):
+            if kind in effect:
+                raise cv.Invalid(
+                    f"{kind} effects only work on a group light (one with group_id)",
+                    [CONF_EFFECTS, i],
+                )
     return config
 
 

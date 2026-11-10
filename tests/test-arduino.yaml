@@ -52,6 +52,16 @@ light:
       - fastcon_scene:
           name: "Whites"
           steps: [warm_white, cold_white, 0x18]
+      - fastcon_colors:
+          name: "Ocean Fade"
+          speed: 40
+          colors: ["#0028FF", "#00C8B4", [0, 110, 255]]
+      - fastcon_colors:
+          name: "Alarm Flash"
+          mode: flash
+          speed: 85
+          colors: ["#FF0000"]
+          brightness: 100%
 
 button:
   - platform: template

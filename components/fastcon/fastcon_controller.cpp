@@ -317,17 +317,13 @@ namespace esphome
 
         std::vector<uint8_t> FastconController::generate_command(uint8_t n, uint32_t light_id_, const std::vector<uint8_t> &data, bool forward)
         {
-            static uint8_t sequence = 0;
-
             // Create command body with header
             std::vector<uint8_t> body(data.size() + 4);
             uint8_t i2 = (light_id_ / 256);
 
             // Construct header
             body[0] = (i2 & 0b1111) | ((n & 0b111) << 4) | (forward ? 0x80 : 0);
-            body[1] = sequence++; // Use and increment sequence number
-            if (sequence >= 255)
-                sequence = 1;
+            body[1] = this->next_sequence_();
 
             body[2] = this->mesh_key_[3]; // Safe key
 
@@ -359,6 +355,49 @@ namespace esphome
             // Prepare the final payload with RF protocol formatting
             std::vector<uint8_t> addr = {DEFAULT_BLE_FASTCON_ADDRESS.begin(), DEFAULT_BLE_FASTCON_ADDRESS.end()};
             return prepare_payload(addr, body);
+        }
+
+        uint8_t FastconController::next_sequence_()
+        {
+            // Use and increment the sequence number (1-254 after the first command)
+            const uint8_t sequence = this->sequence_++;
+            if (this->sequence_ >= 255)
+                this->sequence_ = 1;
+            return sequence;
+        }
+
+        std::vector<uint8_t> FastconController::generate_command_v2(uint8_t n, const std::vector<uint8_t> &data, bool forward)
+        {
+            // Same 4-byte header, checksum and encryption as generate_command, with an 18-byte payload
+            std::vector<uint8_t> body(4 + 18, 0);
+            body[0] = ((n & 0b111) << 4) | (forward ? 0x80 : 0);
+            body[1] = this->next_sequence_();
+            body[2] = this->mesh_key_[3]; // Safe key
+            std::copy(data.begin(), data.begin() + std::min<size_t>(data.size(), 18), body.begin() + 4);
+
+            uint8_t checksum = 0;
+            for (size_t i = 0; i < body.size(); i++)
+            {
+                if (i != 3)
+                    checksum = checksum + body[i];
+            }
+            body[3] = checksum;
+
+            for (size_t i = 0; i < 4; i++)
+                body[i] = DEFAULT_ENCRYPT_KEY[i & 3] ^ body[i];
+            for (size_t i = 4; i < body.size(); i++)
+                body[i] = this->mesh_key_[(i - 4) & 3] ^ body[i];
+
+            // 15 zero bytes, the A5 5A preamble, then the body. Whiten all of it (seed 0x25) and keep
+            // everything from the preamble on: 24 bytes, with no address or CRC.
+            std::vector<uint8_t> buffer(15 + 2 + body.size(), 0);
+            buffer[15] = 0xA5;
+            buffer[16] = 0x5A;
+            std::copy(body.begin(), body.end(), buffer.begin() + 17);
+            WhiteningContext context;
+            whitening_init(0x25, context);
+            whitening_encode(buffer, context);
+            return std::vector<uint8_t>(buffer.begin() + 15, buffer.end());
         }
 
         void FastconController::drop_queued_(const std::vector<uint8_t> &light_ids, std::initializer_list<uint32_t> keys)
@@ -403,10 +442,7 @@ namespace esphome
                 return;
             if (steps.size() > 9)
                 steps.resize(9);
-            const int s = std::clamp(static_cast<int>(speed), 1, 100);
-            // Speed in jiffies (1/64 s). The app's flash speed is 200 - 2*(slider-1); fade uses the
-            // slider value directly, inverted here so higher is faster for both.
-            const uint8_t jiffies = static_cast<uint8_t>(flash ? 200 - 2 * (s - 1) : 101 - s);
+            const uint8_t jiffies = effect_ticks_(flash, speed);
             // Mode bit, plus the "grayscale" bit the app always sets, on the first step
             steps[0] |= (flash ? 0x80 : 0x00) | 0x40;
 
@@ -419,6 +455,41 @@ namespace esphome
             ESP_LOGD(TAG, "Group %u effect: %s, %u steps, %u jiffies: %s", group_id, flash ? "flash" : "fade",
                      (unsigned) steps.size(), jiffies, vector_to_hex_string(inner).c_str());
 
+            queue_group_on_(group_id, member_light_ids);
+            queueCommand(GROUP_QUEUE_KEY + group_id, generate_command(5, 0, inner, true));
+        }
+
+        void FastconController::send_group_colors(uint8_t group_id, bool flash, uint8_t speed,
+                                                  std::vector<std::array<uint8_t, 3>> colors, int brightness,
+                                                  const std::vector<uint8_t> &member_light_ids)
+        {
+            if (colors.empty())
+                return;
+            // With a brightness the app uses the newer command, which has room for one color less
+            const bool with_brightness = brightness >= 0;
+            // As the app does: a single color alternates with black
+            if (colors.size() == 1)
+                colors.push_back({0, 0, 0});
+            colors.resize(std::min<size_t>(colors.size(), with_brightness ? 3 : 4));
+
+            // inner: 00, 52 (6B with a brightness), group, number of colors (| 0x80 for flash), speed,
+            // [brightness 0-127], then each color as red, green, blue. Speed works as for built-in effects.
+            std::vector<uint8_t> inner = {0x00, static_cast<uint8_t>(with_brightness ? 0x6B : 0x52), group_id,
+                                          static_cast<uint8_t>(colors.size() | (flash ? 0x80 : 0x00)),
+                                          effect_ticks_(flash, speed)};
+            if (with_brightness)
+                inner.push_back(static_cast<uint8_t>(std::min(brightness, 127)));
+            for (const auto &color : colors)
+                inner.insert(inner.end(), color.begin(), color.end());
+            ESP_LOGD(TAG, "Group %u color effect: %s, %u colors: %s", group_id, flash ? "flash" : "fade",
+                     (unsigned) colors.size(), vector_to_hex_string(inner).c_str());
+
+            queue_group_on_(group_id, member_light_ids);
+            queueCommand(GROUP_QUEUE_KEY + group_id, generate_command_v2(5, inner, true));
+        }
+
+        void FastconController::queue_group_on_(uint8_t group_id, const std::vector<uint8_t> &member_light_ids)
+        {
             // Make sure the bulbs are on first: a group command with 1 byte of light data, on at full
             // brightness, which keeps their color.
             std::vector<uint8_t> on(12, 0);
@@ -433,7 +504,14 @@ namespace esphome
             // "on"). With round-robin repeats the effect is still the last thing sent.
             drop_queued_(member_light_ids, {GROUP_QUEUE_KEY + group_id, GROUP_ON_QUEUE_KEY + group_id});
             queueCommand(GROUP_ON_QUEUE_KEY + group_id, generate_command(5, 0, on, true));
-            queueCommand(GROUP_QUEUE_KEY + group_id, generate_command(5, 0, inner, true));
+        }
+
+        uint8_t FastconController::effect_ticks_(bool flash, uint8_t speed)
+        {
+            // In jiffies (1/64 s). The app's flash speed is 200 - 2*(slider-1); fade uses the
+            // slider value directly, inverted here so higher is faster for both.
+            const int s = std::clamp(static_cast<int>(speed), 1, 100);
+            return static_cast<uint8_t>(flash ? 200 - 2 * (s - 1) : 101 - s);
         }
 
         void FastconController::send_set_group(uint8_t light_id, uint8_t group_id)

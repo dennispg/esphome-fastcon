@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <deque>
 #include <initializer_list>
 #include <mutex>
@@ -83,6 +84,14 @@ namespace esphome
             // Like send_group, commands still queued for member_light_ids are dropped.
             void send_group_scene(uint8_t group_id, bool flash, uint8_t speed, std::vector<uint8_t> steps,
                                   const std::vector<uint8_t> &member_light_ids = {});
+            // Start the bulbs' custom-color effect on a group (the brMesh app's "RGB mode"): flash or fade
+            // between 1-4 colors, each red, green, blue. A single color alternates with black, as in the app.
+            // brightness 0-127 uses the newer form of the command, which also sets the brightness and takes
+            // 1-3 colors; a negative brightness leaves the bulbs' brightness as it is. speed, the "on" sent
+            // first and member_light_ids work as for send_group_scene.
+            void send_group_colors(uint8_t group_id, bool flash, uint8_t speed,
+                                   std::vector<std::array<uint8_t, 3>> colors, int brightness = -1,
+                                   const std::vector<uint8_t> &member_light_ids = {});
             // Store a group number in one bulb (kept by the bulb; 0 removes it from its group)
             void send_set_group(uint8_t light_id, uint8_t group_id);
             // Every single-bulb light, so group 0 ("All") can mirror its state onto all of them
@@ -119,6 +128,10 @@ namespace esphome
 
             // Drop anything still queued (including pending repeats) for these bulbs or queue keys
             void drop_queued_(const std::vector<uint8_t> &light_ids, std::initializer_list<uint32_t> keys);
+            // Before starting an effect on a group: clear its queue slots and queue an "on" for it
+            void queue_group_on_(uint8_t group_id, const std::vector<uint8_t> &member_light_ids);
+            // An effect's speed (1-100, higher is faster) in the bulbs' 1/64 s ticks
+            static uint8_t effect_ticks_(bool flash, uint8_t speed);
 
             enum class AdvertiseState
             {
@@ -132,6 +145,12 @@ namespace esphome
 
             // Protocol implementation
             std::vector<uint8_t> generate_command(uint8_t n, uint32_t light_id_, const std::vector<uint8_t> &data, bool forward = true);
+            // The app's newer packet format (bl_get_ble_payload), used by the custom-color effect: an
+            // 18-byte payload, and no address or CRC
+            std::vector<uint8_t> generate_command_v2(uint8_t n, const std::vector<uint8_t> &data, bool forward = true);
+            // The sequence number, shared by both packet formats
+            uint8_t next_sequence_();
+            uint8_t sequence_{0};
 
             std::array<uint8_t, 4> mesh_key_{};
 
