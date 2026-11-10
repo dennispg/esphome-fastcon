@@ -18,12 +18,15 @@ namespace esphome
             RGB
         };
 
-        // One of the bulbs' built-in effects (see FastconController::send_group_scene)
+        // An effect the bulbs run by themselves: a built-in one (steps, see FastconController::send_group_scene)
+        // or a custom-color one (colors, see FastconController::send_group_colors)
         struct FastconScene
         {
             bool flash{false};
             uint8_t speed{50};
             std::vector<uint8_t> steps;
+            std::vector<std::array<uint8_t, 3>> colors;
+            int brightness{-1}; // custom colors only: 0-127, or -1 to keep the bulbs' brightness
         };
 
         class FastconLight : public Component, public light::LightOutput

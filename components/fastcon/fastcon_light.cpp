@@ -99,8 +99,13 @@ namespace esphome
 
         void FastconLight::send_scene_()
         {
-            this->controller_->send_group_scene(this->group_id_, this->scene_->flash, this->scene_->speed,
-                                                this->scene_->steps, this->get_member_ids_());
+            if (!this->scene_->colors.empty())
+                this->controller_->send_group_colors(this->group_id_, this->scene_->flash, this->scene_->speed,
+                                                     this->scene_->colors, this->scene_->brightness,
+                                                     this->get_member_ids_());
+            else
+                this->controller_->send_group_scene(this->group_id_, this->scene_->flash, this->scene_->speed,
+                                                    this->scene_->steps, this->get_member_ids_());
             this->scene_sent_ = true;
         }
 

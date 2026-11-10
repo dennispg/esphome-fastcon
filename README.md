@@ -128,7 +128,7 @@ Each light is either a single bulb (`light_id`) or a group (`group_id`). Use exa
 - **supports_white** (*Optional*, boolean): Set to `false` for RGB-only bulbs, which have no white LEDs. Home Assistant then offers only the color wheel, and white comes from the RGB channels. Defaults to `true`
 - **supports_rgb** (*Optional*, boolean): Set to `false` for white-only bulbs, which have only cold/warm white LEDs. Home Assistant then offers only color temperature. Defaults to `true`
 - **supports_color_temperature** (*Optional*, boolean): Set to `false` for bulbs with a single white and no adjustable color temperature (the brMesh app offers just one "white"). Home Assistant then offers the color wheel and a white button, but no color temperature slider. Has no effect when `supports_white` is `false`. Defaults to `true`
-- **effects** (*Optional*, list): ESPHome light effects. Group lights can also use the bulbs' own effects with `fastcon_scene`. See [Built-in effects](#built-in-effects)
+- **effects** (*Optional*, list): ESPHome light effects. Group lights can also use the bulbs' own effects with `fastcon_scene` and `fastcon_colors`. See [Built-in effects](#built-in-effects) and [Custom-color effects](#custom-color-effects)
 - **name** (*Required*, string): The name for the light entity
 - **id** (*Optional*, ID): The ID to use for this light component
 - **controller_id** (*Optional*, ID): The ID of the controller to use. Defaults to "fastcon_controller"
@@ -243,6 +243,36 @@ light:
 
 While an effect runs, the group light doesn't send color or brightness changes, because any steady-color command ends the effect on the bulbs. Those changes are kept and go out when the effect is stopped: setting the effect back to None sends the group's current color, and turning the light off always goes out. The members' entities aren't changed when an effect starts.
 
+### Custom-color effects
+
+The bulbs can also flash or fade between colors you choose (the brMesh app's "RGB mode"). Like built-in effects, the bulbs run these by themselves after a single group command. Add them to a group light as `fastcon_colors` effects:
+
+```yaml
+light:
+  - platform: fastcon
+    name: "Living Room"
+    group_id: 1
+    effects:
+      - fastcon_colors:
+          name: "Ocean"
+          speed: 40
+          colors: ["#0028FF", "#00C8B4", [90, 0, 255]]
+      - fastcon_colors:
+          name: "Alarm"
+          mode: flash
+          speed: 85
+          colors: ["#FF0000"]
+          brightness: 100%
+```
+
+- **name** (*Optional*, string): The effect's name. Defaults to `Colors`
+- **mode** (*Optional*, `flash` or `fade`): Defaults to `fade`
+- **speed** (*Optional*, int, 1-100): Higher is faster. Defaults to 50
+- **colors** (*Required*, list, 1-4 entries): Each a hex color in quotes (`"#FF8000"`; without quotes YAML reads `#` as a comment), or `[red, green, blue]` with each 0-255. A single color alternates with black, as in the app
+- **brightness** (*Optional*, percentage): Also sets the bulbs' brightness while the effect runs. This uses the newer form of the command, which takes 1-3 colors. Without it, the bulbs keep their brightness
+
+Everything said above about `fastcon_scene` (group lights only, the "on" sent first, changes held back while it runs) applies here too.
+
 ### Protocol notes
 
 These layouts were worked out by analysing the brMesh Android app (5.92), for interoperability with the author's own lights. All use command type 5 and the same packet format as single-light control; only the inner payload differs:
@@ -252,6 +282,10 @@ These layouts were worked out by analysing the brMesh Android app (5.92), for in
 | Group control | `((len+3)<<4)\|3`, `2A A8` (light device type), group, then 1- or 6-byte light data |
 | Built-in effect | `((k+2)<<4)\|0x0C`, group, speed (in 1/64 s ticks), then k steps (up to 9; first step `\| 0x40`, plus `\| 0x80` for flash) |
 | Set a bulb's group | `21`, light id, group (forward bit clear) |
+| Custom-color effect | `00 52`, group, number of colors (`\| 0x80` for flash), speed, then each color as R G B (up to 4) |
+| Custom-color effect with brightness | `00 6B`, group, number of colors (`\| 0x80` for flash), speed, brightness (0-127), then each color as R G B (up to 3) |
+
+The custom-color effects use the app's newer packet format: the same 4-byte header, checksum and encryption, but an 18-byte payload, an `A5 5A` preamble instead of the address, no CRC, and whitening (seed `0x25`) applied to the whole buffer.
 
 ## Finding Your Mesh Key
 
