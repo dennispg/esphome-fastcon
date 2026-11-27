@@ -146,6 +146,7 @@ namespace esphome
             uint32_t scan_timeout_ms_{30000};
             uint32_t discovery_started_{0};
             uint32_t discovery_io_started_{0};
+            uint32_t discovery_retry_started_{0};
             uint8_t discovery_sequence_{1};
             uint8_t probe_id_{1};
             uint8_t factory_round_{0};
@@ -169,6 +170,7 @@ namespace esphome
             void discovery_loop_(uint32_t now);
             void send_discovery_round_();
             void finish_discovery_round_();
+            void finish_factory_phase_();
             void finish_discovery_();
             void bind_slots_();
             void confirm_bulb_(uint8_t index);

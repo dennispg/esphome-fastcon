@@ -98,6 +98,7 @@ namespace esphome
 #ifdef USE_FASTCON_DISCOVERY
         static constexpr uint32_t SCAN_BURST_MS = 200;
         static constexpr uint32_t SCAN_REST_MS = 50;
+        static constexpr uint32_t DISCOVERY_RETRY_MS = 10000;
 
         uint8_t FastconController::claimed_count_() const
         {
@@ -393,29 +394,31 @@ namespace esphome
             this->bind_slots_();
         }
 
+        void FastconController::finish_factory_phase_()
+        {
+            if (this->claimed_count_() != 0)
+                this->finish_discovery_();
+            else if (this->discovery_.count != 0)
+            {
+                // A lost confirmation must not discard a key already written to a bulb.
+                ESP_LOGW(TAG, "Factory keying unconfirmed; saved pending identities retained. Reboot to retry");
+                this->discovery_stopped_ = true;
+            }
+            else
+            {
+                this->discovery_.phase = DiscoveryPhase::RECOVERY;
+                if (!this->save_discovery_())
+                    this->discovery_failed_ = true;
+                ESP_LOGI(TAG, "Recovering app key: one all-bulbs ON probe per key, progress %u/10000", this->discovery_.candidate);
+            }
+        }
+
         void FastconController::finish_discovery_round_()
         {
             if (this->discovery_.phase == DiscoveryPhase::FACTORY)
             {
                 if (this->claimed_count_() >= this->max_lights_ || millis() - this->discovery_started_ >= this->scan_timeout_ms_)
-                {
-                    if (this->claimed_count_() != 0)
-                        this->finish_discovery_();
-                    else if (this->discovery_.count != 0)
-                    {
-                        // A lost confirmation must NOT discard a key already written to
-                        // a bulb. Keep pending records and stop; reboot retries with it.
-                        ESP_LOGW(TAG, "Factory keying unconfirmed; saved pending identities retained. Reboot to retry");
-                        this->discovery_failed_ = true;
-                    }
-                    else
-                    {
-                        this->discovery_.phase = DiscoveryPhase::RECOVERY;
-                        if (!this->save_discovery_())
-                            this->discovery_failed_ = true;
-                        ESP_LOGI(TAG, "Recovering app key: one all-bulbs ON probe per key, progress %u/10000", this->discovery_.candidate);
-                    }
-                }
+                    this->finish_factory_phase_();
             }
             else if (this->discovery_.phase == DiscoveryPhase::RECOVERY)
             {
@@ -471,12 +474,37 @@ namespace esphome
                 this->discovery_radio_ready_ = true;
                 this->discovery_started_ = now;
             }
+            if (!this->discovery_stopped_ && this->discovery_.phase == DiscoveryPhase::FACTORY &&
+                now - this->discovery_started_ >= this->scan_timeout_ms_)
+            {
+                // A factory advertisement/listen cannot count as a recovery probe.
+                if (this->discovery_io_ == DiscoveryIO::DRAIN || this->discovery_io_ == DiscoveryIO::SCAN ||
+                    this->discovery_io_ == DiscoveryIO::STOPPING)
+                    this->restart_discovery_ = true;
+                // Persist any in-memory pending identity even if the deadline ends retries.
+                if (this->discovery_failed_)
+                    this->save_discovery_();
+                this->finish_factory_phase_();
+            }
+            if (this->discovery_stopped_ || this->discovery_.phase == DiscoveryPhase::DONE ||
+                this->discovery_.phase == DiscoveryPhase::FAILED)
+            {
+                if (this->discovery_io_ == DiscoveryIO::SCAN)
+                {
+                    this->tracker_->stop_scan();
+                    this->discovery_io_ = DiscoveryIO::STOPPING;
+                }
+                else if (this->discovery_io_ == DiscoveryIO::STOPPING && this->scan_finished_)
+                    this->discovery_io_ = DiscoveryIO::REST;
+                return;
+            }
             if (this->discovery_failed_)
             {
                 if (!this->failure_reported_)
                 {
-                    ESP_LOGW(TAG, "Discovery stopped; progress and pending keys retained. Reboot to retry or use fastcon.set_mesh_key");
+                    ESP_LOGW(TAG, "Discovery failed; progress and pending keys retained, retrying in 10s");
                     this->save_discovery_();
+                    this->discovery_retry_started_ = now;
                     this->failure_reported_ = true;
                 }
                 if (this->discovery_io_ == DiscoveryIO::SCAN)
@@ -487,11 +515,23 @@ namespace esphome
                 else if (this->discovery_io_ != DiscoveryIO::STOPPING || this->scan_finished_)
                     this->discovery_io_ = DiscoveryIO::REST;
                 this->clear_queue();
+                if (now - this->discovery_retry_started_ >= DISCOVERY_RETRY_MS)
+                {
+                    // Ensure pending records and keys are durable before any new SET_KEY.
+                    if (!this->save_discovery_())
+                    {
+                        this->discovery_retry_started_ = now;
+                        return;
+                    }
+                    this->discovery_failed_ = false;
+                    this->failure_reported_ = false;
+                    this->scan_started_ = false;
+                    this->scan_finished_ = false;
+                    this->restart_discovery_ = false;
+                    this->discovery_io_ = DiscoveryIO::SEND;
+                }
                 return;
             }
-            if (this->discovery_stopped_ || this->discovery_.phase == DiscoveryPhase::DONE ||
-                this->discovery_.phase == DiscoveryPhase::FAILED)
-                return;
             switch (this->discovery_io_)
             {
             case DiscoveryIO::SEND:
@@ -519,7 +559,7 @@ namespace esphome
                 }
                 else if (now - this->discovery_io_started_ > 3000)
                 {
-                    ESP_LOGW(TAG, "Discovery scan start not confirmed; stopping without advancing the key candidate");
+                    ESP_LOGW(TAG, "Discovery scan start not confirmed; key candidate retained");
                     this->discovery_failed_ = true;
                 }
                 break;
@@ -544,7 +584,7 @@ namespace esphome
                 }
                 else if (now - this->discovery_io_started_ > 3000)
                 {
-                    ESP_LOGW(TAG, "Discovery scan did not finish; stopping without advancing the key candidate");
+                    ESP_LOGW(TAG, "Discovery scan did not finish; key candidate retained");
                     this->discovery_failed_ = true;
                 }
                 break;

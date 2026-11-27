@@ -57,7 +57,7 @@ static void round(TestController &controller, esp32_ble_tracker::ESP32BLETracker
         }
         if (controller.discovery_io_ == TestController::DiscoveryIO::STOPPING && !tracker.scanning)
             controller.on_scan_end();
-        if (scanned && controller.discovery_io_ == TestController::DiscoveryIO::REST)
+        if (controller.ready() || (scanned && controller.discovery_io_ == TestController::DiscoveryIO::REST))
             return;
     }
     assert(false && "nonblocking scan round did not finish");
@@ -66,7 +66,7 @@ static void round(TestController &controller, esp32_ble_tracker::ESP32BLETracker
 static void prepare(TestController &controller, esp32_ble_tracker::ESP32BLETracker &tracker, uint8_t max = 4)
 {
     controller.set_preference_key(1);
-    controller.set_discovery(&tracker, max, 1);
+    controller.set_discovery(&tracker, max, 30);
     controller.setup();
 }
 
@@ -145,6 +145,7 @@ int main()
     TestController pending;
     esp32_ble_tracker::ESP32BLETracker pending_tracker;
     prepare(pending, pending_tracker, 4);
+    pending.set_discovery(&pending_tracker, 4, 2);
     assert(pending.mesh_key_ == key && pending.discovery_.count == 1);
 
     for (int step = 0; step < 6 && !pending.ready(); step++)
@@ -156,6 +157,7 @@ int main()
     TestController partial;
     esp32_ble_tracker::ESP32BLETracker partial_tracker;
     prepare(partial, partial_tracker, 2);
+    partial.set_discovery(&partial_tracker, 2, 1);
     auto second_factory = factory;
     second_factory[4]++;
     partial.discovery_io_ = TestController::DiscoveryIO::SCAN;
@@ -303,6 +305,126 @@ int main()
         round(scanner_reboot, scanner_reboot_tracker);
         assert(scanner_reboot.discovery_.candidate == 150);
     }
+
+    // Repeated failures retain both in-memory and persisted identities and candidate.
+    test_preferences.clear();
+    TestController retrying;
+    esp32_ble_tracker::ESP32BLETracker retry_tracker;
+    prepare(retrying, retry_tracker);
+    retrying.discovery_.phase = DiscoveryPhase::RECOVERY;
+    retrying.discovery_.candidate = 149;
+    retrying.discovery_.count = 2;
+    retrying.discovery_.bulbs[0].did = {1, 2, 3, 4, 5, 6};
+    retrying.discovery_.bulbs[0].light_id = 1;
+    retrying.discovery_.bulbs[0].claimed = 1;
+    retrying.discovery_.bulbs[1].did = {6, 5, 4, 3, 2, 1};
+    retrying.discovery_.bulbs[1].light_id = 2;
+    const auto retry_key = retrying.mesh_key_;
+    assert(retrying.save_discovery_());
+    retry_tracker.fail_start = true;
+    for (int step = 0; step < 12000; step++) {
+        test_now += 10;
+        retrying.loop();
+        retry_tracker.tick(retrying);
+        assert(retrying.discovery_.candidate == 149);
+    }
+    assert(retry_tracker.starts >= 10);
+    assert(retrying.mesh_key_ == retry_key && retrying.discovery_.count == 2);
+    assert(pref.load(&saved) && saved.candidate == 149 && saved.count == 2);
+    assert(saved.bulbs[0].did == retrying.discovery_.bulbs[0].did && saved.bulbs[0].claimed);
+    assert(saved.bulbs[1].did == retrying.discovery_.bulbs[1].did && !saved.bulbs[1].claimed);
+
+    // The factory deadline is wall-clock time even when all scan starts fail.
+    test_preferences.clear();
+    TestController timeout_failure;
+    esp32_ble_tracker::ESP32BLETracker timeout_tracker;
+    prepare(timeout_failure, timeout_tracker);
+    timeout_failure.set_discovery(&timeout_tracker, 4, 1);
+    timeout_tracker.fail_start = true;
+    const auto timeout_start = test_now;
+    while (test_now - timeout_start < 1000) {
+        test_now += 10;
+        timeout_failure.loop();
+        timeout_tracker.tick(timeout_failure);
+    }
+    assert(timeout_failure.discovery_.phase == DiscoveryPhase::FACTORY);
+    test_now += 10;
+    timeout_failure.loop();
+    timeout_tracker.tick(timeout_failure);
+    assert(timeout_failure.discovery_.phase == DiscoveryPhase::RECOVERY);
+    timeout_tracker.fail_start = false;
+    for (int step = 0; step < 2000 && timeout_failure.discovery_.candidate == 0; step++) {
+        test_now += 10;
+        timeout_failure.loop();
+        timeout_tracker.tick(timeout_failure);
+    }
+    assert(timeout_failure.discovery_.candidate > 0);
+
+    // Expiring in the middle of a valid factory scan must not consume key 0.
+    test_preferences.clear();
+    TestController crossing;
+    esp32_ble_tracker::ESP32BLETracker crossing_tracker;
+    prepare(crossing, crossing_tracker);
+    crossing.set_discovery(&crossing_tracker, 4, 1);
+    while (!crossing_tracker.scanning) {
+        test_now += 10;
+        crossing.loop();
+        crossing_tracker.tick(crossing);
+    }
+    test_now += 1000;
+    crossing.loop();
+    crossing_tracker.tick(crossing);
+    assert(crossing.discovery_.phase == DiscoveryPhase::RECOVERY);
+    for (int step = 0; step < 50; step++) {
+        test_now += 10;
+        crossing.loop();
+        crossing_tracker.tick(crossing);
+        if (crossing.discovery_io_ == TestController::DiscoveryIO::REST) break;
+    }
+    assert(crossing.discovery_.candidate == 0);
+
+    // A pending identity at the deadline stays pending, including on scanner failure.
+    test_preferences.clear();
+    TestController pending_timeout;
+    esp32_ble_tracker::ESP32BLETracker pending_timeout_tracker;
+    prepare(pending_timeout, pending_timeout_tracker);
+    pending_timeout.set_discovery(&pending_timeout_tracker, 4, 1);
+    pending_timeout.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    receive(pending_timeout, factory);
+    pending_timeout.discovery_io_ = TestController::DiscoveryIO::SEND;
+    pending_timeout_tracker.fail_start = true;
+    for (int step = 0; step < 2500; step++) {
+        test_now += 10;
+        pending_timeout.loop();
+        pending_timeout_tracker.tick(pending_timeout);
+    }
+    assert(pending_timeout.discovery_.phase == DiscoveryPhase::FACTORY);
+    assert(pending_timeout.discovery_.count == 1 && !pending_timeout.discovery_.bulbs[0].claimed);
+    assert(pref.load(&saved) && saved.phase == DiscoveryPhase::FACTORY && saved.count == 1);
+    assert(pending_timeout_tracker.starts == 1 && !pending_timeout.ready());
+
+    // One failed scan must not prevent later factory onboarding.
+    test_preferences.clear();
+    TestController transient;
+    esp32_ble_tracker::ESP32BLETracker transient_tracker;
+    prepare(transient, transient_tracker, 1);
+    transient.set_discovery(&transient_tracker, 1, 30);
+    transient_tracker.fail_start = true;
+    while (!transient.discovery_failed_) {
+        test_now += 10;
+        transient.loop();
+        transient_tracker.tick(transient);
+    }
+    transient_tracker.fail_start = false;
+    for (int step = 0; step < 2000 && transient.discovery_.count == 0; step++) {
+        test_now += 10;
+        transient.loop();
+        transient_tracker.tick(transient);
+        if (transient_tracker.scanning) receive(transient, factory);
+    }
+    assert(transient.discovery_.count == 1);
+    round(transient, transient_tracker, heartbeat(transient.mesh_key_, 1));
+    assert(transient.ready() && transient.discovery_.bulbs[0].claimed);
 
     // The listen window starts on confirmed scan-start, not the scan request.
     test_preferences.clear();
