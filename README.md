@@ -352,7 +352,7 @@ In explicit-key configurations, runtime overrides persist when the action is con
 
 ### Software tests
 
-Run `bash tests/run_native_tests.sh` for codec vectors, the discovery state machine with ESPHome/BLE test adapters, and discovery-disabled C++ syntax checks. With ESPHome installed, run `python tests/test_config.py` and `esphome config tests/test-arduino-discovery.yaml` (also the ESP-IDF twin and existing explicit-key configurations). CI cross-compiles all four configs against stable and beta ESPHome. These checks do not exercise an ESP32 radio, real NVS or physical bulbs.
+Run `bash tests/run_native_tests.sh` for codec vectors, the discovery state machine with ESPHome/BLE test adapters, and discovery-disabled C++ syntax checks. Use `FASTCON_SANITIZE=1 bash tests/run_native_tests.sh` to exercise the same native tests under AddressSanitizer/UBSan. With ESPHome installed, run `python tests/test_config.py` and `esphome config tests/test-arduino-discovery.yaml` (also the ESP-IDF twin and existing explicit-key configurations). CI cross-compiles all four configs against stable and beta ESPHome. These checks do not exercise an ESP32 radio, real NVS or physical bulbs.
 
 ## Finding Your Mesh Key (Fallback)
 

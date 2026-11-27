@@ -109,18 +109,18 @@ int main()
         assert(advertisement.size() == 31);
 
     // Steady-state control, including the final group ON, uses complete ADs too.
-    const auto before_control = test_advertisements.size();
     for (int step = 0; step < 20; step++) {
         test_now += 10;
         controller.loop();
     }
-    assert(test_advertisements.size() >= before_control);
     assert(test_advertisements.back()[3] + 4u == test_advertisements.back().size());
+    const auto before_control = test_advertisements.size();
     controller.queueCommand(2, controller.single_control(2, {0xff}));
     for (int step = 0; step < 20; step++) {
         test_now += 10;
         controller.loop();
     }
+    assert(test_advertisements.size() == before_control + 1);
     assert(test_advertisements.back()[3] == 27);
 
     // A legacy controller in a discovery-enabled build keeps its historical AD.
@@ -472,6 +472,75 @@ int main()
     four.finish_discovery_round_();
     assert(four.ready());
     for (uint8_t i = 0; i < 4; i++) assert(slots[i].get_light_id() == i + 1);
+
+    // Drive four-bulb onboarding only through timed loop(), advertisements and
+    // scanner callbacks. Simulated bulbs install a key only after real SET_KEY.
+    test_preferences.clear();
+    test_advertisements.clear();
+    TestController timed;
+    esp32_ble_tracker::ESP32BLETracker timed_tracker;
+    std::array<FastconLight, 4> timed_slots{FastconLight(0), FastconLight(0), FastconLight(0), FastconLight(0)};
+    for (uint8_t i = 0; i < 4; i++) {
+        timed_slots[i].set_slot(i + 1);
+        timed_slots[i].set_controller(&timed);
+        timed.register_light(&timed_slots[i]);
+    }
+    FastconLight timed_group(0);
+    timed_group.set_group_id(0);
+    timed_group.set_controller(&timed);
+    light::LightState timed_group_state;
+    timed_group.setup_state(&timed_group_state);
+    prepare(timed, timed_tracker);
+    timed.set_discovery(&timed_tracker, 4, 30);
+    timed_group.write_state(&timed_group_state);
+    std::array<unsigned, 4> set_keys{};
+    std::array<uint8_t, 4> assigned_ids{};
+    bool wake_seen = false;
+    size_t processed_ads = 0;
+    const auto onboarding_started = test_now;
+    for (int step = 0; step < 5000 && !timed.ready(); step++) {
+        test_now += 10;
+        timed.loop();
+        timed_tracker.tick(timed);
+        while (processed_ads < test_advertisements.size()) {
+            const auto &ad = test_advertisements[processed_ads++];
+            assert(ad.size() == 31 && ad[3] == 27);
+            std::vector<uint8_t> rf(15, 0);
+            rf.insert(rf.end(), ad.begin() + 7, ad.end());
+            WhiteningContext ctx;
+            whitening_init(0x25, ctx);
+            whitening_encode(rf, ctx);
+            for (size_t i = 21; i < 37; i++) rf[i] ^= DEFAULT_ENCRYPT_KEY[(i - 21) & 3];
+            const uint8_t type = (rf[21] >> 4) & 7;
+            if (type == 0) wake_seen = true;
+            if (type != 2) continue;
+            const uint8_t bulb = rf[25] - factory[4];
+            assert(bulb < 4 && wake_seen && set_keys[bulb]++ == 0);
+            assigned_ids[bulb] = rf[31];
+            assert(assigned_ids[bulb] == bulb + 1 && rf[32] == 1);
+            assert(std::equal(rf.begin() + 33, rf.begin() + 37, timed.mesh_key_.begin()));
+        }
+        if (timed_tracker.scanning) {
+            for (uint8_t i = 0; i < 4; i++) {
+                if (set_keys[i]) receive(timed, heartbeat(timed.mesh_key_, assigned_ids[i]), 100 + i);
+                else if (wake_seen) {
+                    auto identity = factory;
+                    identity[4] += i;
+                    receive(timed, identity, 200 + i);
+                }
+            }
+        }
+    }
+    assert(timed.ready() && timed.discovery_.phase == DiscoveryPhase::DONE);
+    for (uint8_t i = 0; i < 4; i++)
+        assert(set_keys[i] == 1 && timed_slots[i].get_light_id() == i + 1);
+    timed.clear_queue();
+    timed_group_state.current_values.state = true;
+    timed_group_state.remote_values = timed_group_state.current_values;
+    timed_group.write_state(&timed_group_state);
+    assert(timed.get_queue_size() == 1); // first real group control after timed discovery
+    std::cout << "Simulated timed four-bulb onboarding: " << test_now - onboarding_started
+              << " ms; four SET_KEY installs and four confirmed slots\n";
 
     // Exhaust the entire keyspace through the real loop and scan state machine.
     test_preferences.clear();
