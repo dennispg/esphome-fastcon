@@ -160,6 +160,7 @@ namespace esphome
             bool scan_finished_{false};
             bool restart_discovery_{false};
             bool heartbeat_seen_{false};
+            bool mesh_key_confirmed_{false}; // heartbeat evidence, independent of slot allocation
             bool discovery_stopped_{false}; // bounded partial success; FACTORY stays resumable in NVS
             bool discovery_failed_{false};
             bool failure_reported_{false};

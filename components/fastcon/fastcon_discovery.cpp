@@ -83,6 +83,7 @@ namespace esphome
                 this->failure_reported_ = false;
                 this->probe_id_ = 1;
                 this->heartbeat_seen_ = false;
+                this->mesh_key_confirmed_ = false;
                 this->bind_slots_();
                 if (this->discovery_io_ == DiscoveryIO::SCAN || this->discovery_io_ == DiscoveryIO::STOPPING)
                     this->restart_discovery_ = true;
@@ -247,8 +248,13 @@ namespace esphome
                     // A heartbeat proves a possible key, not state telemetry. Low IDs
                     // are probed separately before making any slot controllable.
                 }
-                else if (this->discovery_.phase == DiscoveryPhase::ENUMERATE && id == this->probe_id_)
+                else if (this->discovery_.phase == DiscoveryPhase::ENUMERATE)
                 {
+                    // Any valid keyed heartbeat proves mesh membership, even if an
+                    // explicit entity reserves the address or no slot can bind it.
+                    this->mesh_key_confirmed_ = true;
+                    if (id != this->probe_id_)
+                        continue;
                     bool known = false;
                     for (uint8_t i = 0; i < this->discovery_.count; i++)
                         known |= this->discovery_.bulbs[i].light_id == id;
@@ -354,7 +360,8 @@ namespace esphome
 
         void FastconController::finish_discovery_()
         {
-            const bool found = this->claimed_count_() != 0;
+            const bool found = this->claimed_count_() != 0 ||
+                               (this->discovery_.phase == DiscoveryPhase::ENUMERATE && this->mesh_key_confirmed_);
             // Partial success stops radio work for this boot, not future retries.
             // Keep FACTORY in NVS while pending identities may already hold this key.
             const bool pending = this->discovery_.phase == DiscoveryPhase::FACTORY &&
@@ -419,6 +426,7 @@ namespace esphome
                     this->discovery_.key = this->mesh_key_;
                     this->discovery_.key_known = 1;
                     this->discovery_.phase = DiscoveryPhase::ENUMERATE;
+                    this->mesh_key_confirmed_ = false;
                     this->probe_id_ = 1;
                     if (!this->save_discovery_())
                         this->discovery_failed_ = true;
@@ -440,7 +448,8 @@ namespace esphome
             {
                 if (++this->probe_id_ > 16 || this->claimed_count_() >= this->max_lights_)
                 {
-                    if (this->claimed_count_() == 0 && !this->discovery_.runtime_override && this->discovery_.candidate < 9999)
+                    if (!this->mesh_key_confirmed_ && this->claimed_count_() == 0 &&
+                        !this->discovery_.runtime_override && this->discovery_.candidate < 9999)
                     {
                         // Checksum-only accidental key match: no address answered it.
                         this->discovery_.candidate++;

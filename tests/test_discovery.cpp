@@ -378,6 +378,46 @@ int main()
     whitening_encode(single_rf, single_ctx);
     assert((single_rf[25] ^ light_boot.mesh_key_[0]) == 0x72); // new color, not short ON
 
+    // Reserved addresses confirm the mesh key without consuming discovery slots.
+    for (bool runtime_override : {false, true}) {
+        test_preferences.clear();
+        TestController reserved;
+        esp32_ble_tracker::ESP32BLETracker reserved_tracker;
+        FastconLight reserved_light(1), unbound_slot(0);
+        reserved_light.set_controller(&reserved);
+        unbound_slot.set_controller(&reserved);
+        unbound_slot.set_slot(1);
+        reserved.register_light(&reserved_light);
+        reserved.register_light(&unbound_slot);
+        prepare(reserved, reserved_tracker);
+        light::LightState reserved_state;
+        reserved_light.setup_state(&reserved_state);
+        reserved_light.write_state(&reserved_state); // boot restoration during discovery
+        const auto recovered_key = app_mesh_key(1234);
+        if (runtime_override)
+            assert(reserved.apply_mesh_key("31323334"));
+        else {
+            reserved.discovery_.phase = DiscoveryPhase::RECOVERY;
+            reserved.discovery_.candidate = 1234;
+            round(reserved, reserved_tracker, heartbeat(recovered_key, 1));
+            assert(reserved.discovery_.phase == DiscoveryPhase::ENUMERATE);
+        }
+        for (int step = 0; step < 16; step++)
+            round(reserved, reserved_tracker, heartbeat(recovered_key, 1));
+        assert(reserved.discovery_.count == 0 && unbound_slot.get_light_id() == 0 && unbound_slot.warning);
+        assert(reserved.discovery_.phase == DiscoveryPhase::DONE && reserved.ready());
+        reserved.clear_queue();
+        reserved_state.current_values.state = true;
+        reserved_state.remote_values = reserved_state.current_values;
+        reserved_light.write_state(&reserved_state);
+        assert(reserved.get_queue_size() == 1); // explicit entities remain usable
+        TestController reserved_reboot;
+        esp32_ble_tracker::ESP32BLETracker reserved_reboot_tracker;
+        prepare(reserved_reboot, reserved_reboot_tracker);
+        assert(reserved_reboot.ready() && reserved_reboot.discovery_.count == 0);
+        assert(reserved_reboot.mesh_key_ == recovered_key);
+    }
+
     // The primary four-bulb case: one controller key, four distinct identities
     // and four unique numbers, even if the advertiser address is reused/changes.
     test_preferences.clear();
