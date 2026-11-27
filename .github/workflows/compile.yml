@@ -2,7 +2,6 @@ name: Compile
 
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
   # Weekly, so breaking changes in new ESPHome releases are caught before users hit them
@@ -10,6 +9,18 @@ on:
     - cron: "0 6 * * 1"
 
 jobs:
+  unit:
+    name: Protocol, discovery runtime and config tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install esphome
+      - run: bash tests/run_native_tests.sh
+      - run: python tests/test_config.py
+
   compile:
     name: ${{ matrix.config }} (esphome ${{ matrix.channel }})
     runs-on: ubuntu-latest
@@ -18,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [test-arduino, test-esp-idf]
+        config: [test-arduino, test-esp-idf, test-arduino-discovery, test-esp-idf-discovery]
         channel: [stable, beta]
     steps:
       - uses: actions/checkout@v4
