@@ -496,22 +496,39 @@ namespace esphome
                 if (this->adv_state_ != AdvertiseState::IDLE || !this->is_queue_empty())
                     return;
                 this->scan_finished_ = false;
+                this->scan_started_ = false;
                 this->tracker_->start_scan();
                 this->discovery_io_ = DiscoveryIO::SCAN;
                 this->discovery_io_started_ = now;
                 break;
             case DiscoveryIO::SCAN:
-                if (this->scan_finished_ || now - this->discovery_io_started_ >= SCAN_BURST_MS)
+                if (this->scan_finished_ ||
+                    (this->scan_started_ && now - this->scan_started_at_ >= SCAN_BURST_MS))
                 {
                     this->tracker_->stop_scan();
                     this->discovery_io_ = DiscoveryIO::STOPPING;
+                }
+                else if (now - this->discovery_io_started_ > 3000)
+                {
+                    ESP_LOGW(TAG, "Discovery scan start not confirmed; stopping without advancing the key candidate");
+                    this->discovery_failed_ = true;
                 }
                 break;
             case DiscoveryIO::STOPPING:
                 if (this->scan_finished_)
                 {
+                    // ESPHome also fires scan-end during failed-start cleanup. Only
+                    // a confirmed, full active listen window may consume a candidate.
                     if (!this->restart_discovery_)
-                        this->finish_discovery_round_();
+                    {
+                        if (this->scan_started_ && this->scan_ended_at_ - this->scan_started_at_ >= SCAN_BURST_MS)
+                            this->finish_discovery_round_();
+                        else
+                        {
+                            ESP_LOGW(TAG, "Discovery scan ended without a complete listen window; key candidate retained");
+                            this->discovery_failed_ = true;
+                        }
+                    }
                     this->restart_discovery_ = false;
                     this->discovery_io_ = DiscoveryIO::REST;
                     this->discovery_io_started_ = now;

@@ -15,10 +15,11 @@ struct esp_ble_adv_params_t {
 };
 enum esp_gap_ble_cb_event_t {
     ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT, ESP_GAP_BLE_ADV_START_COMPLETE_EVT,
-    ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT
+    ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT, ESP_GAP_BLE_SCAN_START_COMPLETE_EVT,
+    ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT
 };
 struct esp_ble_gap_cb_param_t {
-    struct Status { int status = 0; } adv_data_raw_cmpl, adv_start_cmpl, adv_stop_cmpl;
+    struct Status { int status = 0; } adv_data_raw_cmpl, adv_start_cmpl, adv_stop_cmpl, scan_start_cmpl, scan_stop_cmpl;
 };
 inline std::vector<std::vector<uint8_t>> test_advertisements;
 inline int test_advertise_result = ESP_OK;

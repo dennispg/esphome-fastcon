@@ -116,6 +116,34 @@ namespace esphome
                              (int) param->adv_stop_cmpl.status);
                 }
                 break;
+#ifdef USE_FASTCON_DISCOVERY
+            case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
+                if (this->tracker_ != nullptr && this->discovery_io_ == DiscoveryIO::SCAN)
+                {
+                    if (param->scan_start_cmpl.status == ESP_BT_STATUS_SUCCESS)
+                    {
+                        this->scan_started_ = true;
+                        this->scan_started_at_ = millis();
+                    }
+                    else
+                    {
+                        ESP_LOGW(TAG, "Discovery scan start failed (status %d); candidate retained without a listen window",
+                                 (int) param->scan_start_cmpl.status);
+                        this->discovery_failed_ = true;
+                    }
+                }
+                break;
+            case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
+                if (this->tracker_ != nullptr &&
+                    (this->discovery_io_ == DiscoveryIO::SCAN || this->discovery_io_ == DiscoveryIO::STOPPING) &&
+                    param->scan_stop_cmpl.status != ESP_BT_STATUS_SUCCESS)
+                {
+                    ESP_LOGW(TAG, "Discovery scan stop failed (status %d); candidate retained",
+                             (int) param->scan_stop_cmpl.status);
+                    this->discovery_failed_ = true;
+                }
+                break;
+#endif
             default:
                 break;
             }

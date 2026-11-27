@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <esp_gap_ble_api.h>
 #include "esphome/core/component.h"
 #include "esphome/components/esp32_ble/ble.h"
 namespace esphome::esp32_ble_tracker {
@@ -29,7 +30,27 @@ public:
     void set_scan_continuous(bool) {}
     void set_scan_duration(uint32_t) {}
     void set_scan_active(bool) {}
-    void start_scan() { scanning = true; starts++; }
-    void stop_scan() { scanning = false; stops++; }
+    bool start_pending = false, stop_pending = false;
+    bool fail_start = false, fail_stop = false;
+    uint32_t start_delay_ms = 0, requested_at = 0;
+    void start_scan() { start_pending = true; requested_at = millis(); starts++; }
+    void stop_scan() { scanning = false; stop_pending = true; stops++; }
+    template<typename Controller> void tick(Controller &controller) {
+        esp_ble_gap_cb_param_t param{};
+        if (start_pending && millis() - requested_at >= start_delay_ms) {
+            start_pending = false;
+            scanning = !fail_start;
+            param.scan_start_cmpl.status = fail_start ? 1 : ESP_BT_STATUS_SUCCESS;
+            controller.gap_event_handler(ESP_GAP_BLE_SCAN_START_COMPLETE_EVT, &param);
+            // ESPHome cleanup notifies scan-end even after async start failure.
+            if (fail_start) controller.on_scan_end();
+        }
+        if (stop_pending) {
+            stop_pending = false;
+            param.scan_stop_cmpl.status = fail_stop ? 1 : ESP_BT_STATUS_SUCCESS;
+            controller.gap_event_handler(ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT, &param);
+            controller.on_scan_end();
+        }
+    }
 };
 }

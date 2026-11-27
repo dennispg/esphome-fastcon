@@ -49,6 +49,7 @@ static void round(TestController &controller, esp32_ble_tracker::ESP32BLETracker
     {
         test_now += 10;
         controller.loop();
+        tracker.tick(controller);
         if (controller.discovery_io_ == TestController::DiscoveryIO::SCAN)
         {
             scanned = true;
@@ -276,6 +277,68 @@ int main()
     test_advertise_result = ESP_OK;
     assert(radio_failure.discovery_.candidate == 100 && radio_failure.discovery_failed_);
 
+    // Async scan failures are cleanup callbacks, not completed listen windows.
+    for (bool fail_start : {true, false}) {
+        test_preferences.clear();
+        TestController scanner_failure;
+        esp32_ble_tracker::ESP32BLETracker scanner_failure_tracker;
+        prepare(scanner_failure, scanner_failure_tracker);
+        scanner_failure.discovery_.phase = DiscoveryPhase::RECOVERY;
+        scanner_failure.discovery_.candidate = 149; // next value would checkpoint
+        assert(scanner_failure.save_discovery_());
+        scanner_failure_tracker.fail_start = fail_start;
+        scanner_failure_tracker.fail_stop = !fail_start;
+        for (int step = 0; step < 500; step++) {
+            test_now += 10;
+            scanner_failure.loop();
+            scanner_failure_tracker.tick(scanner_failure);
+        }
+        assert(scanner_failure_tracker.starts == 1);
+        assert(scanner_failure.discovery_.candidate == 149 && scanner_failure.discovery_failed_);
+        assert(pref.load(&saved) && saved.candidate == 149);
+        TestController scanner_reboot;
+        esp32_ble_tracker::ESP32BLETracker scanner_reboot_tracker;
+        prepare(scanner_reboot, scanner_reboot_tracker);
+        assert(scanner_reboot.discovery_.candidate == 149);
+        round(scanner_reboot, scanner_reboot_tracker);
+        assert(scanner_reboot.discovery_.candidate == 150);
+    }
+
+    // The listen window starts on confirmed scan-start, not the scan request.
+    test_preferences.clear();
+    TestController delayed_scan;
+    esp32_ble_tracker::ESP32BLETracker delayed_tracker;
+    prepare(delayed_scan, delayed_tracker);
+    delayed_scan.discovery_.phase = DiscoveryPhase::RECOVERY;
+    delayed_scan.discovery_.candidate = 101;
+    delayed_tracker.start_delay_ms = 300;
+    round(delayed_scan, delayed_tracker);
+    assert(delayed_scan.discovery_.candidate == 102 && !delayed_scan.discovery_failed_);
+    assert(test_now - delayed_tracker.requested_at >= 500);
+
+    // An early scan-end cannot become a full listen window during later cleanup.
+    test_preferences.clear();
+    TestController short_scan;
+    esp32_ble_tracker::ESP32BLETracker short_tracker;
+    prepare(short_scan, short_tracker);
+    short_scan.discovery_.phase = DiscoveryPhase::RECOVERY;
+    short_scan.discovery_.candidate = 101;
+    while (!short_tracker.scanning) {
+        test_now += 10;
+        short_scan.loop();
+        short_tracker.tick(short_scan);
+    }
+    test_now += 20;
+    short_tracker.scanning = false;
+    short_scan.on_scan_end();
+    test_now += 1000; // application loop stalled after the early end callback
+    for (int step = 0; step < 10; step++) {
+        short_scan.loop();
+        short_tracker.tick(short_scan);
+        test_now += 10;
+    }
+    assert(short_scan.discovery_failed_ && short_scan.discovery_.candidate == 101);
+
     // The primary four-bulb case: one controller key, four distinct identities
     // and four unique numbers, even if the advertiser address is reused/changes.
     test_preferences.clear();
@@ -343,6 +406,7 @@ int main()
     for (int step = 0; step < 1000000 && sweep.discovery_.phase != DiscoveryPhase::FAILED; step++) {
         test_now += 10;
         sweep.loop();
+        sweep_tracker.tick(sweep);
         if (sweep.discovery_io_ == TestController::DiscoveryIO::STOPPING && !sweep_tracker.scanning)
             sweep.on_scan_end();
     }

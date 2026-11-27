@@ -53,7 +53,12 @@ namespace esphome
                 scan_timeout_ms_ = uint32_t(timeout_s) * 1000;
             }
             bool parse_device(const esp32_ble_tracker::ESPBTDevice &device) override;
-            void on_scan_end() override { scan_finished_ = true; }
+            void on_scan_end() override
+            {
+                if (!scan_finished_)
+                    scan_ended_at_ = millis();
+                scan_finished_ = true;
+            }
 #endif
             void setup() override;
             void loop() override;
@@ -149,6 +154,9 @@ namespace esphome
             bool recovery_wake_sent_{false};
             uint8_t pending_index_{0};
             std::array<bool, 16> factory_seen_{};
+            bool scan_started_{false};
+            uint32_t scan_started_at_{0};
+            uint32_t scan_ended_at_{0};
             bool scan_finished_{false};
             bool restart_discovery_{false};
             bool heartbeat_seen_{false};
