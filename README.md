@@ -80,7 +80,7 @@ button:
 
 #### Fastcon Controller
 
-- **mesh_key** (*Required*, string): The mesh key for your Fastcon lights in hexadecimal format (8 characters/4 bytes)
+- **mesh_key** (*Required*, string): The mesh key in hexadecimal format (8 characters/4 bytes), or `auto` to opt into [Auto-Discovery](#auto-discovery)
 - **id** (*Optional*, ID): The ID to use for this controller component. Defaults to "fastcon_controller"
 - **adv_interval_min** (*Optional*, int): Minimum advertisement interval. Defaults to 0x20
 - **adv_interval_max** (*Optional*, int): Maximum advertisement interval. Defaults to 0x40
@@ -120,9 +120,10 @@ Note: the ESP32's Bluetooth stack rejects advertising intervals below 0x20, so v
 
 #### Fastcon Light
 
-Each light is either a single bulb (`light_id`) or a group (`group_id`). Use exactly one of the two.
+Each light is a single bulb (`light_id`), a group (`group_id`), or an auto-discovery slot (`slot`). Use exactly one.
 
 - **light_id** (*Optional*, int): The ID of a single bulb (1-255)
+- **slot** (*Optional*, int): A runtime-bound discovery slot (1..`discovery.max_lights`); requires `mesh_key: auto`
 - **group_id** (*Optional*, int): A group number (0-255), controlled with a single broadcast. `0` is the brMesh app's "All" group. See [Group Control](#group-control)
 - **members** (*Optional*, list of light IDs): Group lights only. The single-bulb lights in this group, so their entities follow the group's state. Group `0` without `members` follows every single-bulb light
 - **supports_white** (*Optional*, boolean): Set to `false` for RGB-only bulbs, which have no white LEDs. Home Assistant then offers only the color wheel, and white comes from the RGB channels. Defaults to `true`
@@ -253,7 +254,107 @@ These layouts were worked out by analysing the brMesh Android app (5.92), for in
 | Built-in effect | `((k+2)<<4)\|0x0C`, group, speed (in 1/64 s ticks), then k steps (up to 9; first step `\| 0x40`, plus `\| 0x80` for flash) |
 | Set a bulb's group | `21`, light id, group (forward bit clear) |
 
-## Finding Your Mesh Key
+## Auto-Discovery
+
+Auto-discovery is **opt-in and experimental**. Existing hexadecimal `mesh_key` configurations do not scan, pair or change bulb keys. FastCon uses manufacturer-specific BLE **advertisements**, not GATT connections or Bluetooth SIG Mesh. Discovery responses/heartbeats can confirm membership; they are not command acknowledgments or light-state telemetry. Home Assistant state remains optimistic.
+
+### Flashing four lights once
+
+Flash [`examples/auto-discovery.yaml`](examples/auto-discovery.yaml) from a checkout of this repository: select the ESP32 board, create `examples/secrets.yaml` with `wifi_ssid` and `wifi_password`, and keep your usual API encryption and OTA credentials. It defines four compile-time entities, so no second build is needed after finding bulbs. The test configurations in `tests/` are compile-only and do not configure Wi-Fi or the Home Assistant API; **do not flash those as a ready-to-use bridge**.
+
+For an existing ESPHome device, keep its normal network/API/OTA configuration and add:
+
+```yaml
+esp32_ble_server:
+esp32_ble_tracker:
+  scan_parameters:
+    continuous: false
+    active: false
+    duration: 1s
+    interval: 50ms
+    window: 25ms
+
+external_components:
+  - source: github://dennispg/esphome-fastcon@main
+
+fastcon:
+  mesh_key: auto
+  discovery:
+    max_lights: 4       # 1..16, default 4
+    scan_timeout_s: 30  # 1..600, default 30; factory-discovery phase only
+
+light:
+  - platform: fastcon
+    name: "Fastcon 1"
+    slot: 1
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "Fastcon 2"
+    slot: 2
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "Fastcon 3"
+    slot: 3
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "Fastcon 4"
+    slot: 4
+    default_transition_length: 0s
+```
+
+`discovery` is optional with `mesh_key: auto`; its defaults are shown above. It is rejected with an explicit key. Keep all advertising intervals at least `0x20`. The existing advertisement timing, queue, repeat and TX-power options still apply to normal control. Recovery intentionally sends a single command per candidate regardless of `repeat_count`.
+
+A `slot` is mutually exclusive with `light_id` and `group_id`, must be within `discovery.max_lights`, and cannot be declared twice. Capability flags work as on explicit lights. Slot names/IDs are stable across reboots; rename them in Home Assistant after identifying the physical bulbs. Explicit single-light addresses are reserved during factory assignment. Group `0` still controls all bulbs sharing the controller key, including bulbs beyond the configured slots. Slots can be group members; unbound slots are skipped when assigning groups.
+
+**Availability limitation:** ESPHome's native light API has no per-light unavailable/unknown-state field. Unbound slots therefore remain visible and may show an optimistic/restored state, but send **no** control advertisements and carry a component warning until bound. They cannot truthfully be displayed as `unavailable` by this external component alone. A bound slot becomes controllable when discovery completes; a failed search leaves slots inert. This is not a bulb-health or presence monitor.
+
+### Fast manual reclaim of app-paired bulbs
+
+The primary protocol reference is [AdysTech's byte-level capture](https://github.com/AdysTech/br-mesh-controller/blob/main/protocol.md), including its boot-window keying lifecycle (§2.9). On those bulbs, **every boot briefly opens a pairing window**: WAKE heard then allows SET_KEY to replace the saved key. There is no physical reset switch. Simply rebooting without WAKE keeps the old key.
+
+For a fast takeover, start discovery, then **power-cycle each intended bulb one at a time while WAKE is running**. The reference firmware reclaims a bulb in seconds; timing on this ESPHome port still needs hardware validation. Each distinct reversed-MAC identity gets its own light number, while all four get the **same newly generated controller key**. Cycle all four within the factory scan window (raise `scan_timeout_s`, for example to 120, if needed). Their four slot entities then control them independently. Only power-cycle bulbs intended for this controller: this deliberately replaces their app key.
+
+The no-power-cycle 10,000-key fallback does **not** lock out this fast path. It interleaves a short WAKE/listen round every four candidates; a factory identity immediately pauses recovery and starts a fresh bounded factory-keying window. After completion or exhaustion, scanning/WAKE stops. This is initial onboarding, not an always-on incremental-enrollment service.
+
+The app **rotates its mesh key on add/room changes** (§2.7). A recovered app key is only valid until it is changed again. A successful no-power-cycle recovery keeps that existing key; power-cycle/WAKE reclaim instead installs a controller-owned key. Close the app during discovery and avoid re-adding/re-grouping the bulbs in it afterwards.
+
+### What happens at first boot
+
+1. **Restore first.** One versioned ESPHome Preferences/NVS record per controller holds the shared four-byte mesh key, stable bulb IDs, claimed flags, identity bytes/MAC addresses when available, phase and recovery checkpoint. A completed discovery restores immediately without scanning or re-keying any bulb.
+2. **Phase A — factory bulbs.** Power-cycle the unclaimed bulbs during the configured scan window. WAKE advertisements (at least 400 ms) and per-bulb SET_KEY advertisements (at least 300 ms) alternate with short passive scans (about 200 ms) and a rest interval; these waits are state-machine timers, not blocking delays. The matcher accepts both the captured **18-byte manufacturer representation** (`F0 FF` included) and the **16-byte old-protocol body** supplied after ESPHome strips the company ID. The cleartext factory key `5E 36 7B C4` is at manufacturer bytes `[14..17]` (body `[12..15]`). Every distinct reversed-MAC identity is collected independently, ignoring repeated nonce changes. Each bulb receives the next unused 1-based light ID and the controller's randomly generated **shared** key using SET_KEY under the factory key. A correctly decrypted heartbeat with matching `safe_key` and checksum confirms the binding. Pending identities and their key are flushed before SET_KEY, so a reboot cannot forget a key already sent to a bulb. Confirmed bulbs are never re-keyed on restore. Stop early when `max_lights` are confirmed; otherwise stop after the timeout plus the in-flight radio round. The default factory phase takes up to roughly 30 seconds.
+3. **Phase B — existing app-keyed bulbs.** Only when Phase A found no factory candidates, try the app's 10,000 ASCII-digit keys (`"0000"` through `"9999"`, represented as four bytes). Each candidate gets **one group-0 ON command at full brightness, keeping the current color**, followed by a short scan. An extra WAKE/listen round (at least 100 ms advertising) every four candidates keeps boot-window reclaim reachable without repeating candidate group commands. A matching heartbeat is checked by decrypting the body, checking `safe_key == key[3]`, checksum, heartbeat opcode and address range. The winning command visibly turns on **every nearby bulb on that mesh**, not just the slots. Then probe addresses **1..16**, binding confirmed addresses in ascending order up to `max_lights`; re-assert group ON/full brightness at completion. Addresses above 16, non-app random keys and additional meshes are not exhaustively searched. If the factory phase claimed any bulbs, other app-keyed meshes are not searched.
+4. **Phase C — no confirmation.** Log a warning and stop; no continuous scan or automatic endless retry. Use the [ADB fallback](#finding-your-mesh-key-fallback), then apply the key at runtime or switch to an explicit-key configuration. If factory candidates were found but keying was not confirmed, retain their pending records rather than discarding a possibly installed key; reboot to retry with those same saved identities/key. A radio/storage error also stops without silently advancing the candidate.
+
+The slow path is I/O-bound and nonblocking: no busy key-search loop or blocking delays. With defaults, a full sweep is on the order of **an hour or more**, not seconds. The synthetic 10 ms-loop test takes about **73 minutes** including the interleaved reclaim WAKE rounds; budget **1–2 hours**, with no guaranteed wall-clock maximum because Wi-Fi coexistence, scanner startup/stop latency and longer advertising durations can make it substantially longer. This is a software timing model, not a radio benchmark. Progress is logged every 500 keys and checkpointed every 50 to limit flash wear; a reboot can repeat up to 49 candidates, but does not restart the whole search. Completed/exhausted searches do not repeat on every boot. Enumeration takes several more seconds.
+
+Discovery scanning stops after completion/failure. Do not run other scan-start automations during discovery, or turn on continuous scanning: it competes with the advertising used for control. The short listen windows and weak protocol checksum are **not a guarantee of recovery**: missed heartbeats, periodic advertisements, variant firmware and unrelated mesh traffic need testing on real bulbs. Keep the phone app closed while discovering. An apparent key with no responding low addresses is rejected and recovery continues. The provisioning, response timing and four-bulb power-loss/reboot behavior have not been hardware-validated by the software tests.
+
+### Persistence and runtime fallback
+
+Preferences normally survive firmware/OTA updates, **not a full flash erase**. Keep the controller `id` unchanged: it namespaces the record. Erasing flash or changing the ID loses the saved random key and mappings; preserve the one-time INFO discovery lines (`light_id` and eight-hex key) before doing so. App-based re-pairing can change the bulbs' key independently. Saved confirmed bulbs are never re-keyed automatically. Power-cycling other app-keyed bulbs into an active WAKE window explicitly allows reclaiming them with a new key. Mixed meshes need separate controllers or manual setup.
+
+`fastcon.set_mesh_key` validates an eight-hex-character key, saves/applies it, drops queued old-key commands, and restarts low-ID enumeration for an auto controller without sending SET_KEY. It also accepts a lambda. For example, add a native API action to accept a recovered key from Home Assistant:
+
+```yaml
+api:
+  actions:
+    - action: set_fastcon_mesh_key
+      variables:
+        mesh_key: string
+      then:
+        - fastcon.set_mesh_key:
+            mesh_key: !lambda 'return mesh_key;'
+```
+
+The API action appears in Home Assistant's device actions (enable user-defined actions in the ESPHome integration if needed). Call it with the key from ADB. Alternatively a template button can run `fastcon.set_mesh_key: {mesh_key: "31323334"}`. Invalid runtime strings leave the current key untouched. Applying a key does **not** install that key into bulbs; it must already match them. Slot bindings are cleared and re-enumerated, so check their physical identities after switching meshes.
+
+In explicit-key configurations, runtime overrides persist when the action is configured and the compiled key is unchanged. Reflashing with a different explicit key takes precedence; configurations without this new action retain the original explicit-key boot/control behavior.
+
+### Software tests
+
+Run `bash tests/run_native_tests.sh` for codec vectors, the discovery state machine with ESPHome/BLE test adapters, and discovery-disabled C++ syntax checks. With ESPHome installed, run `python tests/test_config.py` and `esphome config tests/test-arduino-discovery.yaml` (also the ESP-IDF twin and existing explicit-key configurations). CI cross-compiles all four configs against stable and beta ESPHome. These checks do not exercise an ESP32 radio, real NVS or physical bulbs.
+
+## Finding Your Mesh Key (Fallback)
 
 The mesh key is crucial for controlling your Fastcon BLE lights. To find your light's mesh key, you first need to setup your devices using an Android device. The app generates a unique mesh key that will be used with all lights that are set up in the app.
 
@@ -318,6 +419,14 @@ Thank you to everyone who kept this project going with pull requests, forks and 
 ### Implementation References
 
 - [ArcadeMachinist's brMeshMQTT](https://github.com/ArcadeMachinist/brMeshMQTT) - This work was crucial in helping me understand the practical implementation details of the protocol. https://github.com/ArcadeMachinist/brMeshMQTT
+
+### Discovery References
+
+- **Primary byte-level reference: [AdysTech/br-mesh-controller](https://github.com/AdysTech/br-mesh-controller), especially [protocol.md](https://github.com/AdysTech/br-mesh-controller/blob/main/protocol.md).** Its physical three-bulb captures establish the factory identity layout, WAKE/SET_KEY bytes and boot-window reclaim flow. The discovery codec is cross-checked byte-for-byte against that implementation; its persistent per-bulb architecture also informed this port.
+- [dsclee1/BRmesh-esp32-mqtt](https://github.com/dsclee1/BRmesh-esp32-mqtt): generic ESP32 factory scanning, assigning successive light IDs and installing a shared key
+- [Zoft123/ha-esp-ble-bridge](https://github.com/Zoft123/ha-esp-ble-bridge): ESPHome-side pairing flow, announced device keys and heartbeat decoding
+- [GregoryIvo/brmesh-esphome](https://github.com/GregoryIvo/brmesh-esphome): pairing address pools, persistence and app-free gateway experiments; its documentation distinguishes tested control from unverified gateway pairing
+- [Jueff](https://github.com/Jueff) and the [community discussion](https://community.home-assistant.io/t/brmesh-app-bluetooth-lights/473486/95): earlier BRmesh interoperability and key-recovery work
 
 ### Community Resources
 
