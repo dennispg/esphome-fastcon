@@ -27,6 +27,28 @@ namespace esphome
             ESP_LOGCONFIG(TAG, "Setting up Fastcon BLE light (ID: %d)...", this->light_id_);
         }
 
+        void FastconLight::bind_slot(uint8_t light_id)
+        {
+            if (this->slot_ == 0)
+                return;
+            this->light_id_ = light_id;
+            this->shown_.clear();
+            if (light_id == 0)
+                this->status_set_warning("Discovery slot is not bound to a bulb");
+            else
+                this->status_clear_warning();
+        }
+
+        void FastconLight::mirror_discovery_on()
+        {
+            if (this->state_ == nullptr || this->light_id_ == 0)
+                return;
+            auto values = this->state_->remote_values;
+            values.set_state(true);
+            values.set_brightness(1.0f);
+            this->mirror(values, {0xff});
+        }
+
         void FastconLight::set_controller(FastconController *controller)
         {
             this->controller_ = controller;
@@ -51,7 +73,8 @@ namespace esphome
                 return;
             }
             for (auto *member : this->members_)
-                this->controller_->send_set_group(member->get_light_id(), this->group_id_);
+                if (member->get_light_id() != 0)
+                    this->controller_->send_set_group(member->get_light_id(), this->group_id_);
         }
 
         const std::vector<FastconLight *> &FastconLight::get_members_() const
@@ -67,7 +90,8 @@ namespace esphome
             std::vector<uint8_t> member_ids;
             member_ids.reserve(members.size());
             for (auto *member : members)
-                member_ids.push_back(member->get_light_id());
+                if (member->get_light_id() != 0)
+                    member_ids.push_back(member->get_light_id());
             return member_ids;
         }
 
@@ -177,7 +201,7 @@ namespace esphome
 
         void FastconLight::mirror(const light::LightColorValues &values, const std::vector<uint8_t> &light_data)
         {
-            if (this->state_ == nullptr)
+            if (this->state_ == nullptr || (this->slot_ != 0 && this->light_id_ == 0))
                 return;
             this->mirrored_data_ = light_data;
             auto call = this->state_->make_call();
@@ -203,6 +227,8 @@ namespace esphome
 
         void FastconLight::write_state(light::LightState *state)
         {
+            if ((this->slot_ != 0 && this->light_id_ == 0) || !this->controller_->ready())
+                return;
             const auto &values = state->current_values;
             auto light_data = this->controller_->get_light_data(values);
 

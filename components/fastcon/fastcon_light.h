@@ -38,6 +38,10 @@ namespace esphome
             void set_controller(FastconController *controller);
 
             uint8_t get_light_id() const { return light_id_; }
+            void set_slot(uint8_t slot) { slot_ = slot; }
+            uint8_t get_slot() const { return slot_; }
+            void bind_slot(uint8_t light_id);
+            void mirror_discovery_on();
             light::LightState *get_state() const { return state_; }
             // Which LEDs the bulb has, so Home Assistant only offers controls that do something
             void set_supports_rgb(bool supports) { supports_rgb_ = supports; }
@@ -87,6 +91,7 @@ namespace esphome
             FastconController *controller_{nullptr};
             light::LightState *state_{nullptr};
             uint8_t light_id_;
+            uint8_t slot_{0};
             bool supports_rgb_{true};
             bool supports_white_{true};
             bool supports_color_temperature_{true};

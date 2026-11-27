@@ -15,6 +15,10 @@ namespace esphome
 
         void FastconController::queueCommand(uint32_t light_id_, const std::vector<uint8_t> &data)
         {
+#ifdef USE_FASTCON_DISCOVERY
+            if (!this->ready())
+                return;
+#endif
             std::lock_guard<std::mutex> lock(queue_mutex_);
 
             // Newest command wins. If this light already has a command waiting
@@ -63,6 +67,12 @@ namespace esphome
                 ESP_LOGCONFIG(TAG, "  TX power: Bluetooth stack default (level %d)",
                               (int) esp_ble_tx_power_get(ESP_BLE_PWR_TYPE_ADV));
             }
+            if (this->preference_key_ != 0)
+                this->setup_preferences_();
+#ifdef USE_FASTCON_DISCOVERY
+            if (this->tracker_ != nullptr)
+                this->setup_discovery_();
+#endif
         }
 
         void FastconController::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
@@ -72,6 +82,10 @@ namespace esphome
             case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
                 if (param->adv_data_raw_cmpl.status != ESP_BT_STATUS_SUCCESS)
                 {
+#ifdef USE_FASTCON_DISCOVERY
+                    if (this->tracker_ != nullptr && !this->ready())
+                        this->discovery_failed_ = true;
+#endif
                     ESP_LOGW(TAG, "Bluetooth controller rejected the advertising data (status %d)",
                              (int) param->adv_data_raw_cmpl.status);
                 }
@@ -79,6 +93,10 @@ namespace esphome
             case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
                 if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS)
                 {
+#ifdef USE_FASTCON_DISCOVERY
+                    if (this->tracker_ != nullptr && !this->ready())
+                        this->discovery_failed_ = true;
+#endif
                     ESP_LOGW(TAG, "Bluetooth controller failed to start advertising (status %d)",
                              (int) param->adv_start_cmpl.status);
                 }
@@ -90,6 +108,10 @@ namespace esphome
             case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
                 if (param->adv_stop_cmpl.status != ESP_BT_STATUS_SUCCESS)
                 {
+#ifdef USE_FASTCON_DISCOVERY
+                    if (this->tracker_ != nullptr && !this->ready())
+                        this->discovery_failed_ = true;
+#endif
                     ESP_LOGW(TAG, "Bluetooth controller failed to stop advertising (status %d)",
                              (int) param->adv_stop_cmpl.status);
                 }
@@ -102,6 +124,16 @@ namespace esphome
         void FastconController::loop()
         {
             const uint32_t now = millis();
+#ifdef USE_FASTCON_DISCOVERY
+            if (this->tracker_ != nullptr)
+            {
+                if (esp32_ble::global_ble == nullptr || !esp32_ble::global_ble->is_active())
+                    return;
+                this->discovery_loop_(now);
+                if (this->discovery_io_ == DiscoveryIO::SCAN || this->discovery_io_ == DiscoveryIO::STOPPING)
+                    return;
+            }
+#endif
 
             switch (adv_state_)
             {
@@ -165,7 +197,12 @@ namespace esphome
                 adv_data_raw[adv_data_len++] = ESP_BLE_ADV_FLAG_BREDR_NOT_SPT | ESP_BLE_ADV_FLAG_GEN_DISC;
 
                 // Add manufacturer data
+#ifdef USE_FASTCON_DISCOVERY
+                // Discovery frames use a complete manufacturer AD (type + company ID).
+                adv_data_raw[adv_data_len++] = cmd.data.size() + (cmd.light_id == DISCOVERY_QUEUE_KEY ? 3 : 2);
+#else
                 adv_data_raw[adv_data_len++] = cmd.data.size() + 2;
+#endif
                 adv_data_raw[adv_data_len++] = ESP_BLE_AD_MANUFACTURER_SPECIFIC_TYPE;
                 adv_data_raw[adv_data_len++] = MANUFACTURER_DATA_ID & 0xFF;
                 adv_data_raw[adv_data_len++] = (MANUFACTURER_DATA_ID >> 8) & 0xFF;
@@ -176,6 +213,10 @@ namespace esphome
                 esp_err_t err = esp_ble_gap_config_adv_data_raw(adv_data_raw, adv_data_len);
                 if (err != ESP_OK)
                 {
+#ifdef USE_FASTCON_DISCOVERY
+                    if (this->tracker_ != nullptr && !this->ready())
+                        this->discovery_failed_ = true;
+#endif
                     ESP_LOGW(TAG, "Error setting raw advertisement data (err=%d): %s", err, esp_err_to_name(err));
                     return;
                 }
@@ -183,6 +224,10 @@ namespace esphome
                 err = esp_ble_gap_start_advertising(&adv_params);
                 if (err != ESP_OK)
                 {
+#ifdef USE_FASTCON_DISCOVERY
+                    if (this->tracker_ != nullptr && !this->ready())
+                        this->discovery_failed_ = true;
+#endif
                     ESP_LOGW(TAG, "Error starting advertisement (err=%d): %s", err, esp_err_to_name(err));
                     return;
                 }
@@ -195,7 +240,12 @@ namespace esphome
 
             case AdvertiseState::ADVERTISING:
             {
-                if (now - state_start_time_ >= adv_duration_)
+                uint16_t duration = this->adv_duration_;
+#ifdef USE_FASTCON_DISCOVERY
+                if (this->tracker_ != nullptr && !this->ready())
+                    duration = this->discovery_adv_duration_;
+#endif
+                if (now - state_start_time_ >= duration)
                 {
                     esp_ble_gap_stop_advertising();
                     adv_state_ = AdvertiseState::GAP;

@@ -28,6 +28,7 @@ AUTO_LOAD = ["light"]
 
 CONF_CONTROLLER_ID = "controller_id"
 CONF_MEMBERS = "members"
+CONF_SLOT = "slot"
 CONF_SUPPORTS_RGB = "supports_rgb"
 CONF_SUPPORTS_WHITE = "supports_white"
 CONF_SUPPORTS_COLOR_TEMPERATURE = "supports_color_temperature"
@@ -137,6 +138,7 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(CONF_OUTPUT_ID): cv.declare_id(FastconLight),
             # A single bulb...
             cv.Optional(CONF_LIGHT_ID): cv.int_range(min=1, max=255),
+            cv.Optional(CONF_SLOT): cv.int_range(min=1, max=16),
             # ...or a group: one broadcast that every bulb in the group obeys.
             # 0 is the brMesh app's "All" group.
             cv.Optional(CONF_GROUP_ID): cv.int_range(min=0, max=255),
@@ -155,7 +157,7 @@ CONFIG_SCHEMA = cv.All(
             ),
         }
     ).extend(cv.COMPONENT_SCHEMA),
-    cv.has_exactly_one_key(CONF_LIGHT_ID, CONF_GROUP_ID),
+    cv.has_exactly_one_key(CONF_LIGHT_ID, CONF_GROUP_ID, CONF_SLOT),
     _validate_members_need_group,
     _validate_scenes_need_group,
 )
@@ -167,10 +169,10 @@ def _validate_member(member_id):
     member_config = fconf.get_config_for_path(path)
     if (
         member_config.get(CONF_PLATFORM) != "fastcon"
-        or CONF_LIGHT_ID not in member_config
+        or not (CONF_LIGHT_ID in member_config or CONF_SLOT in member_config)
     ):
         raise cv.Invalid(
-            f"Group member '{member_id}' must be a fastcon light with a light_id (not a group)"
+            f"Group member '{member_id}' must be a single-bulb fastcon light (light_id or slot, not a group)"
         )
     return member_id
 
@@ -204,12 +206,32 @@ def _warn_shared_members(config):
     return config
 
 
+def _validate_slot(config):
+    if CONF_SLOT not in config:
+        return config
+    full = fv.full_config.get()
+    controller_path = full.get_path_for_id(config[CONF_CONTROLLER_ID])[:-1]
+    controller = full.get_config_for_path(controller_path)
+    if controller.get("mesh_key") != "auto":
+        raise cv.Invalid("slot requires a controller with mesh_key: auto", [CONF_SLOT])
+    if config[CONF_SLOT] > controller["discovery"]["max_lights"]:
+        raise cv.Invalid("slot exceeds discovery.max_lights", [CONF_SLOT])
+    for other in full.get("light", []):
+        if (other.get(CONF_PLATFORM) == "fastcon"
+                and other.get(CONF_CONTROLLER_ID) == config[CONF_CONTROLLER_ID]
+                and other.get(CONF_SLOT) == config[CONF_SLOT]
+                and other[CONF_OUTPUT_ID] != config[CONF_OUTPUT_ID]):
+            raise cv.Invalid("Each slot may only have one light entity", [CONF_SLOT])
+    return config
+
+
 FINAL_VALIDATE_SCHEMA = cv.All(
     cv.Schema(
         {cv.Optional(CONF_MEMBERS): [_validate_member]},
         extra=cv.ALLOW_EXTRA,
     ),
     _warn_shared_members,
+    _validate_slot,
 )
 
 
@@ -223,6 +245,9 @@ async def to_code(config):
     cg.add(var.set_supports_rgb(config[CONF_SUPPORTS_RGB]))
     cg.add(var.set_supports_white(config[CONF_SUPPORTS_WHITE]))
     cg.add(var.set_supports_color_temperature(config[CONF_SUPPORTS_COLOR_TEMPERATURE]))
+
+    if CONF_SLOT in config:
+        cg.add(var.set_slot(config[CONF_SLOT]))
 
     if CONF_GROUP_ID in config:
         cg.add(var.set_group_id(config[CONF_GROUP_ID]))
