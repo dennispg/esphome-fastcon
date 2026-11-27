@@ -198,8 +198,10 @@ namespace esphome
 
                 // Add manufacturer data
 #ifdef USE_FASTCON_DISCOVERY
-                // Discovery frames use a complete manufacturer AD (type + company ID).
-                adv_data_raw[adv_data_len++] = cmd.data.size() + (cmd.light_id == DISCOVERY_QUEUE_KEY ? 3 : 2);
+                // Auto controllers emit complete ADs for discovery AND steady-state control.
+                // Preserve legacy payload+2 framing: hardware tolerates it and existing
+                // explicit-key installations depend on their historical wire behavior.
+                adv_data_raw[adv_data_len++] = cmd.data.size() + (this->tracker_ != nullptr ? 3 : 2);
 #else
                 adv_data_raw[adv_data_len++] = cmd.data.size() + 2;
 #endif

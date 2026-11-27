@@ -107,6 +107,29 @@ int main()
     for (const auto &advertisement : test_advertisements)
         assert(advertisement.size() == 31);
 
+    // Steady-state control, including the final group ON, uses complete ADs too.
+    const auto before_control = test_advertisements.size();
+    for (int step = 0; step < 20; step++) {
+        test_now += 10;
+        controller.loop();
+    }
+    assert(test_advertisements.size() >= before_control);
+    assert(test_advertisements.back()[3] + 4u == test_advertisements.back().size());
+    controller.queueCommand(2, controller.single_control(2, {0xff}));
+    for (int step = 0; step < 20; step++) {
+        test_now += 10;
+        controller.loop();
+    }
+    assert(test_advertisements.back()[3] == 27);
+
+    // A legacy controller in a discovery-enabled build keeps its historical AD.
+    TestController legacy;
+    legacy.set_mesh_key(key);
+    legacy.setup();
+    legacy.queueCommand(1, legacy.single_control(1, {0xff}));
+    legacy.loop();
+    assert(test_advertisements.back()[3] == 26);
+
     TestController restored;
     esp32_ble_tracker::ESP32BLETracker restored_tracker;
     prepare(restored, restored_tracker, 1);
