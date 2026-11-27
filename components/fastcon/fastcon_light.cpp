@@ -228,7 +228,24 @@ namespace esphome
         void FastconLight::write_state(light::LightState *state)
         {
             if ((this->slot_ != 0 && this->light_id_ == 0) || !this->controller_->ready())
+            {
+                // Suppress transport, not ESPHome's boot-restoration bookkeeping.
+                // Otherwise the first real request after discovery looks like boot
+                // restoration (and a new color is mistaken for the bulb's baseline).
+                const auto &values = state->current_values;
+                this->last_written_ = this->controller_->get_light_data(values);
+                if (this->baseline_pending_)
+                {
+                    this->baseline_pending_ = false;
+                    this->remember_shown_(values);
+                }
+                if (this->is_group_ && this->boot_write_pending_)
+                {
+                    this->boot_write_pending_ = false;
+                    ESP_LOGD(TAG, "Group %u: not sending the restored boot state", this->group_id_);
+                }
                 return;
+            }
             const auto &values = state->current_values;
             auto light_data = this->controller_->get_light_data(values);
 

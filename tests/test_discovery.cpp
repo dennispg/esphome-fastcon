@@ -339,6 +339,45 @@ int main()
     }
     assert(short_scan.discovery_failed_ && short_scan.discovery_.candidate == 101);
 
+    // Boot restoration bookkeeping is independent of transport readiness.
+    test_preferences.clear();
+    TestController light_boot;
+    esp32_ble_tracker::ESP32BLETracker light_boot_tracker;
+    prepare(light_boot, light_boot_tracker);
+    FastconLight boot_group(0), boot_single(1);
+    boot_group.set_group_id(0);
+    boot_group.set_controller(&light_boot);
+    boot_single.set_controller(&light_boot);
+    light::LightState group_state, single_state;
+    group_state.output = &boot_group;
+    single_state.output = &boot_single;
+    boot_group.setup_state(&group_state);
+    boot_single.setup_state(&single_state);
+    single_state.current_values.green = 0;
+    single_state.current_values.blue = 0;
+    boot_group.write_state(&group_state);
+    boot_single.write_state(&single_state);
+    assert(light_boot.is_queue_empty());
+    light_boot.discovery_.phase = DiscoveryPhase::DONE;
+    group_state.current_values.state = true;
+    group_state.remote_values = group_state.current_values;
+    boot_group.write_state(&group_state);
+    assert(light_boot.get_queue_size() == 1); // the FIRST post-discovery request
+    light_boot.clear_queue();
+    single_state.current_values.state = true;
+    single_state.current_values.red = 0;
+    single_state.current_values.blue = 1;
+    single_state.remote_values = single_state.current_values;
+    boot_single.write_state(&single_state);
+    assert(light_boot.get_queue_size() == 1);
+    std::vector<uint8_t> single_rf(15, 0);
+    const auto &single_packet = light_boot.queue_.front().data;
+    single_rf.insert(single_rf.end(), single_packet.begin(), single_packet.end());
+    WhiteningContext single_ctx;
+    whitening_init(0x25, single_ctx);
+    whitening_encode(single_rf, single_ctx);
+    assert((single_rf[25] ^ light_boot.mesh_key_[0]) == 0x72); // new color, not short ON
+
     // The primary four-bulb case: one controller key, four distinct identities
     // and four unique numbers, even if the advertiser address is reused/changes.
     test_preferences.clear();
