@@ -38,7 +38,9 @@ namespace esphome
             bool ready() const
             {
 #ifdef USE_FASTCON_DISCOVERY
-                return tracker_ == nullptr || discovery_.phase == DiscoveryPhase::DONE;
+                return tracker_ == nullptr || discovery_.phase == DiscoveryPhase::DONE ||
+                       (discovery_.phase == DiscoveryPhase::FACTORY && discovery_stopped_ &&
+                        discovery_.key_known && !discovery_failed_);
 #else
                 return true;
 #endif
@@ -150,6 +152,7 @@ namespace esphome
             bool scan_finished_{false};
             bool restart_discovery_{false};
             bool heartbeat_seen_{false};
+            bool discovery_stopped_{false}; // bounded partial success; FACTORY stays resumable in NVS
             bool discovery_failed_{false};
             bool failure_reported_{false};
             bool discovery_radio_ready_{false};

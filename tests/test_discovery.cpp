@@ -146,6 +146,58 @@ int main()
     prepare(pending, pending_tracker, 4);
     assert(pending.mesh_key_ == key && pending.discovery_.count == 1);
 
+    for (int step = 0; step < 6 && !pending.ready(); step++)
+        round(pending, pending_tracker, heartbeat(key, 2));
+    assert(pending.discovery_.bulbs[0].claimed && pending.ready());
+
+    // Partial factory confirmation remains resumable after timeout and reboot.
+    test_preferences.clear();
+    TestController partial;
+    esp32_ble_tracker::ESP32BLETracker partial_tracker;
+    prepare(partial, partial_tracker, 2);
+    auto second_factory = factory;
+    second_factory[4]++;
+    partial.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    receive(partial, factory);
+    receive(partial, second_factory);
+    receive(partial, heartbeat(partial.mesh_key_, 1));
+    const auto confirmed = partial.discovery_.bulbs[0];
+    test_now += 2000;
+    partial.finish_discovery_round_();
+    assert(pref.load(&saved) && saved.phase == DiscoveryPhase::FACTORY);
+    assert(saved.bulbs[0].claimed && !saved.bulbs[1].claimed);
+    assert(partial.ready());
+    partial.discovery_io_ = TestController::DiscoveryIO::REST;
+    for (int step = 0; step < 100; step++) { test_now += 10; partial.loop(); }
+    assert(partial_tracker.starts == 0); // bounded stop, not continuous retries
+    TestController partial_reboot;
+    esp32_ble_tracker::ESP32BLETracker partial_reboot_tracker;
+    prepare(partial_reboot, partial_reboot_tracker, 2);
+    assert(partial_reboot.discovery_.phase == DiscoveryPhase::FACTORY);
+    assert(partial_reboot.mesh_key_ == partial.mesh_key_);
+    // Even a factory identity for a confirmed bulb must never trigger SET_KEY.
+    partial_reboot.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    receive(partial_reboot, factory);
+    partial_reboot.discovery_io_ = TestController::DiscoveryIO::SEND;
+    for (int step = 0; step < 4; step++) {
+        partial_reboot.clear_queue();
+        partial_reboot.send_discovery_round_();
+        const auto &packet = partial_reboot.queue_.front().data;
+        std::vector<uint8_t> rf(15, 0);
+        rf.insert(rf.end(), packet.begin(), packet.end());
+        WhiteningContext ctx;
+        whitening_init(0x25, ctx);
+        whitening_encode(rf, ctx);
+        assert((((rf[21] ^ DEFAULT_ENCRYPT_KEY[0]) >> 4) & 7) != 2);
+    }
+    partial_reboot.clear_queue();
+    round(partial_reboot, partial_reboot_tracker, heartbeat(partial.mesh_key_, 2));
+    assert(partial_reboot.ready() && partial_reboot.discovery_.phase == DiscoveryPhase::DONE);
+    assert(partial_reboot.discovery_.bulbs[1].claimed);
+    assert(partial_reboot.discovery_.bulbs[0].did == confirmed.did);
+    assert(partial_reboot.discovery_.bulbs[0].light_id == confirmed.light_id);
+    assert(partial_reboot.discovery_.bulbs[0].claimed == confirmed.claimed);
+
     // A resumed enumeration must not duplicate previously confirmed addresses.
     pending.discovery_.phase = DiscoveryPhase::ENUMERATE;
     pending.discovery_.count = 1;

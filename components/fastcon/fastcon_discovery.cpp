@@ -78,6 +78,7 @@ namespace esphome
 #ifdef USE_FASTCON_DISCOVERY
             if (this->tracker_ != nullptr)
             {
+                this->discovery_stopped_ = false;
                 this->discovery_failed_ = false;
                 this->failure_reported_ = false;
                 this->probe_id_ = 1;
@@ -354,7 +355,15 @@ namespace esphome
         void FastconController::finish_discovery_()
         {
             const bool found = this->claimed_count_() != 0;
-            this->discovery_.phase = found ? DiscoveryPhase::DONE : DiscoveryPhase::FAILED;
+            // Partial success stops radio work for this boot, not future retries.
+            // Keep FACTORY in NVS while pending identities may already hold this key.
+            const bool pending = this->discovery_.phase == DiscoveryPhase::FACTORY &&
+                                 this->claimed_count_() < this->discovery_.count;
+            this->discovery_.phase = pending ? DiscoveryPhase::FACTORY :
+                                     found ? DiscoveryPhase::DONE : DiscoveryPhase::FAILED;
+            this->discovery_stopped_ = true;
+            if (pending)
+                ESP_LOGW(TAG, "Factory keying partially confirmed; pending identities retained. Reboot to retry");
             if (!this->save_discovery_())
                 this->discovery_failed_ = true;
             if (found)
@@ -471,7 +480,8 @@ namespace esphome
                 this->clear_queue();
                 return;
             }
-            if (this->discovery_.phase == DiscoveryPhase::DONE || this->discovery_.phase == DiscoveryPhase::FAILED)
+            if (this->discovery_stopped_ || this->discovery_.phase == DiscoveryPhase::DONE ||
+                this->discovery_.phase == DiscoveryPhase::FAILED)
                 return;
             switch (this->discovery_io_)
             {
