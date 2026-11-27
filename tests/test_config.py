@@ -28,6 +28,13 @@ class DiscoveryConfigTest(unittest.TestCase):
         if message:
             self.assertIn(message, output)
 
+    def test_example_with_placeholder_secrets(self):
+        result = subprocess.run(
+            [os.environ.get("ESPHOME", "esphome"), "config", str(ROOT / "examples/auto-discovery.yaml")],
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_defaults(self):
         config = copy.deepcopy(BASE)
         del config["fastcon"]["discovery"]

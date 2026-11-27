@@ -175,3 +175,4 @@ cython_debug/
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 secrets.yaml
+!examples/secrets.yaml

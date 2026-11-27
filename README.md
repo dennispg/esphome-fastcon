@@ -260,7 +260,7 @@ Auto-discovery is **opt-in and experimental**. Existing hexadecimal `mesh_key` c
 
 ### Flashing four lights once
 
-Flash [`examples/auto-discovery.yaml`](examples/auto-discovery.yaml) from a checkout of this repository: select the ESP32 board, create `examples/secrets.yaml` with `wifi_ssid` and `wifi_password`, and keep your usual API encryption and OTA credentials. It defines four compile-time entities, so no second build is needed after finding bulbs. The test configurations in `tests/` are compile-only and do not configure Wi-Fi or the Home Assistant API; **do not flash those as a ready-to-use bridge**.
+Flash [`examples/auto-discovery.yaml`](examples/auto-discovery.yaml) from a checkout of this repository: select the ESP32 board, replace the placeholder `wifi_ssid` and `wifi_password` in `examples/secrets.yaml`, and keep your usual API encryption and OTA credentials. It defines four compile-time entities, so no second build is needed after finding bulbs. The test configurations in `tests/` are compile-only and do not configure Wi-Fi or the Home Assistant API; **do not flash those as a ready-to-use bridge**.
 
 For an existing ESPHome device, keep its normal network/API/OTA configuration and add:
 
