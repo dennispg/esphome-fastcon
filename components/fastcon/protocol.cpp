@@ -56,5 +56,70 @@ namespace esphome
             // Return only the portion after 0xf bytes
             return std::vector<uint8_t>(payload.begin() + 0xf, payload.end());
         }
+        std::array<uint8_t, 4> app_mesh_key(uint16_t candidate)
+        {
+            std::array<uint8_t, 4> key{};
+            for (int i = 3; i >= 0; i--)
+            {
+                key[i] = 0x30 + candidate % 10;
+                candidate /= 10;
+            }
+            return key;
+        }
+
+        bool decode_factory_identity(const std::vector<uint8_t> &frame, std::array<uint8_t, 6> &did)
+        {
+            // AdysTech captured 18 manufacturer bytes including F0 FF. ESPHome
+            // strips those two company bytes, exposing the same 16-byte body.
+            const size_t offset = frame.size() == 18 && frame[0] == 0xf0 && frame[1] == 0xff ? 2 : 0;
+            if (frame.size() != offset + 16 || ((frame[offset] ^ DEFAULT_ENCRYPT_KEY[0]) & 0x70) != 0x10 ||
+                !std::equal(DEFAULT_ENCRYPT_KEY.begin(), DEFAULT_ENCRYPT_KEY.end(), frame.begin() + offset + 12))
+                return false;
+            std::copy_n(frame.begin() + offset + 4, 6, did.begin());
+            return true;
+        }
+
+        bool decode_heartbeat(const std::vector<uint8_t> &frame, const std::array<uint8_t, 4> &key, uint8_t &light_id)
+        {
+            const size_t offset = frame.size() == 18 && frame[0] == 0xf0 && frame[1] == 0xff ? 2 : 0;
+            if (frame.size() != offset + 16)
+                return false;
+            std::array<uint8_t, 16> body{};
+            for (size_t i = 0; i < body.size(); i++)
+                body[i] = frame[offset + i] ^ (i < 4 ? DEFAULT_ENCRYPT_KEY[i] : key[(i - 4) & 3]);
+            const uint8_t type = (body[0] >> 4) & 7;
+            // Both heartbeat type variants occur in community decoders. Never accept
+            // a relayed control command (payload opcode 2/3) as proof of a bulb.
+            if ((type != 3 && type != 5) || (body[0] & 0x0f) != 0 || body[2] != key[3] ||
+                (body[4] & 0x0f) != 4 || body[5] == 0)
+                return false;
+            uint8_t checksum = 0;
+            for (size_t i = 0; i < body.size(); i++)
+                if (i != 3)
+                    checksum += body[i];
+            if (checksum != body[3])
+                return false;
+            light_id = body[5];
+            return true;
+        }
+
+        std::vector<uint8_t> encode_discovery_command(uint8_t type, uint8_t sequence, const std::vector<uint8_t> &data,
+                                                     const std::array<uint8_t, 4> &key, uint8_t safe_key)
+        {
+            if (data.size() > 12)
+                return {};
+            std::vector<uint8_t> body(16, 0);
+            body[0] = ((type & 7) << 4) | (type == 5 ? 0x80 : 0);
+            body[1] = sequence;
+            body[2] = safe_key;
+            std::copy(data.begin(), data.end(), body.begin() + 4);
+            uint8_t checksum = 0;
+            for (auto byte : body)
+                checksum += byte;
+            body[3] = checksum;
+            for (size_t i = 0; i < body.size(); i++)
+                body[i] ^= i < 4 ? DEFAULT_ENCRYPT_KEY[i] : key[(i - 4) & 3];
+            return prepare_payload({DEFAULT_BLE_FASTCON_ADDRESS.begin(), DEFAULT_BLE_FASTCON_ADDRESS.end()}, body);
+        }
     } // namespace fastcon
 } // namespace esphome
