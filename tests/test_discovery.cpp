@@ -152,18 +152,13 @@ int main()
     prepare(pending, pending_tracker, 4, 120);
     assert(pending.mesh_key_ == key && pending.discovery_.count == 1);
     assert(!pending.discovery_.bulbs[0].claimed && !pending.mesh_key_confirmed_);
-    // A late boot-window identity must renew the deadline before it expires.
+    // A late duplicate cannot renew the original deadline.
     pending.loop(); // Initialize the radio deadline before advancing simulated time.
     test_now += 119000;
     round(pending, pending_tracker, factory);
-    test_now += 2000; // Past the original deadline, but within the renewed window.
-    pending.finish_discovery_round_();
-    assert(!pending.discovery_failed_ && !pending.discovery_.bulbs[0].claimed);
-
-    for (int step = 0; step < 6 && !pending.discovery_.bulbs[0].claimed; step++)
-        round(pending, pending_tracker, heartbeat(key, 2));
-    assert(pending.discovery_.bulbs[0].claimed);
-    assert(pending.mesh_key_confirmed_);
+    test_now += 2000;
+    pending.loop();
+    assert(pending.discovery_stopped_ && !pending.discovery_.bulbs[0].claimed);
 
     // Partial factory confirmation remains resumable after timeout and reboot.
     test_preferences.clear();
@@ -744,6 +739,38 @@ int main()
     shared_repair.loop();
     assert(shared_repair.discovery_stopped_);
     assert(pref.load(&saved) && saved.count == 2 && !saved.bulbs[0].claimed && !saved.bulbs[1].claimed);
+
+    // Duplicate factory identities cannot extend the timeout; pending key and
+    // identity remain persisted and radio rounds stop at expiry.
+    test_preferences.clear();
+    TestController bounded;
+    esp32_ble_tracker::ESP32BLETracker bounded_tracker;
+    prepare(bounded, bounded_tracker, 1, 1);
+    const auto bounded_key = bounded.mesh_key_;
+    unsigned bounded_scans = 0;
+    for (int step = 0; step < 1000 && !bounded.discovery_stopped_; step++) {
+        test_now += 10;
+        bounded.loop();
+        bounded_tracker.tick(bounded);
+        if (bounded_tracker.scanning) {
+            bounded_scans++;
+            receive(bounded, factory);
+        }
+        if (bounded.discovery_io_ == TestController::DiscoveryIO::STOPPING && !bounded_tracker.scanning)
+            bounded.on_scan_end();
+    }
+    assert(bounded.discovery_stopped_);
+    assert(bounded_tracker.starts < 20);
+    assert(bounded.discovery_.phase == DiscoveryPhase::FACTORY && bounded.discovery_.count == 1);
+    assert(bounded.discovery_.key == bounded_key && bounded.discovery_.bulbs[0].did[0] != 0);
+    assert(pref.load(&saved) && saved.key == bounded_key && saved.count == 1 && !saved.bulbs[0].claimed);
+    const auto scans_at_expiry = bounded_scans;
+    for (int step = 0; step < 100; step++) {
+        test_now += 10;
+        bounded.loop();
+        bounded_tracker.tick(bounded);
+    }
+    assert(bounded_scans == scans_at_expiry);
 
     // The primary four-bulb case: one controller key, four distinct identities
     // and four unique numbers, even if the advertiser address is reused/changes.

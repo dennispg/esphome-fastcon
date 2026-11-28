@@ -208,8 +208,8 @@ namespace esphome
                     decode_factory_identity(frame, did))
                 {
                     handled = true;
-                    if (this->discovery_.phase == DiscoveryPhase::FACTORY)
-                        this->discovery_started_ = millis();
+                    // The factory window starts once and is never extended by
+                    // repeated advertisements of an identity already recorded.
                     if (this->discovery_.phase == DiscoveryPhase::RECOVERY)
                     {
                         // A boot-window identity always preempts the slow app-key search.
@@ -569,6 +569,13 @@ namespace esphome
             switch (this->discovery_io_)
             {
             case DiscoveryIO::SEND:
+                // Never start another radio round at or beyond the factory deadline.
+                if (this->discovery_.phase == DiscoveryPhase::FACTORY &&
+                    now - this->discovery_started_ >= this->scan_timeout_ms_)
+                {
+                    this->finish_factory_phase_();
+                    return;
+                }
                 if (this->adv_state_ != AdvertiseState::IDLE || !this->is_queue_empty())
                     return;
                 this->send_discovery_round_();
