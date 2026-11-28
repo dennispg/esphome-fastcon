@@ -44,9 +44,16 @@ class DiscoveryConfigTest(unittest.TestCase):
         config = copy.deepcopy(BASE)
         config["fastcon"].update({
             "adv_interval_min": 32, "adv_interval_max": 64,
-            "adv_duration": 100, "adv_gap": 20, "max_queue_size": 1,
+            "adv_duration": 100, "adv_gap": 20, "max_queue_size": 2,
             "repeat_count": 5, "tx_power": 9,
         })
+        self.validate(config, True)
+
+    def test_minimum_queue_size_required_for_group_scenes(self):
+        config = copy.deepcopy(BASE)
+        config["fastcon"]["max_queue_size"] = 1
+        self.validate(config, False, "max_queue_size must be at least 2")
+        config["fastcon"]["max_queue_size"] = 2
         self.validate(config, True)
 
     def test_ranges(self):

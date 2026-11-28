@@ -89,6 +89,12 @@ def validate_mesh_key(value):
     return validate_hex_bytes(value)
 
 
+def validate_queue_size(config):
+    if config[CONF_MAX_QUEUE_SIZE] < 2:
+        raise cv.Invalid("max_queue_size must be at least 2 for the two-packet group scene operation")
+    return config
+
+
 def validate_discovery(config):
     if config[CONF_MESH_KEY] == "auto":
         config[CONF_DISCOVERY] = DISCOVERY_SCHEMA(config.get(CONF_DISCOVERY, {}))
@@ -151,6 +157,7 @@ CONFIG_SCHEMA = cv.All(
         }
     ).extend(cv.COMPONENT_SCHEMA),
     validate_discovery,
+    validate_queue_size,
 )
 
 
