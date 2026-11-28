@@ -282,6 +282,14 @@ namespace esphome
                         this->discovery_.bulbs[index].light_id = id;
                         this->discovery_.bulbs[index].mac = device.address_uint64();
                         this->confirm_bulb_(index);
+                        if (this->discovery_failed_)
+                        {
+                            // The count/address and claim are one durable discovery
+                            // operation. Never leave an unclaimed entry that the
+                            // duplicate check would make impossible to confirm later.
+                            this->discovery_.bulbs[index] = {};
+                            this->discovery_.count--;
+                        }
                         this->heartbeat_seen_ = true;
                     }
                 }

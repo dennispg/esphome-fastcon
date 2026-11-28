@@ -20,6 +20,7 @@ public:
     using FastconController::save_discovery_;
     using FastconController::queue_;
     using FastconController::discovery_failed_;
+    using FastconController::failure_reported_;
     using FastconController::mesh_key_confirmed_;
     using FastconController::repair_seen_;
     using FastconController::repair_attempts_;
@@ -547,6 +548,44 @@ int main()
         assert(reserved_reboot.ready() && reserved_reboot.discovery_.count == 0);
         assert(reserved_reboot.mesh_key_ == recovered_key);
     }
+
+    // A failed first confirmation rolls back the enumeration insertion, so a
+    // later valid reply after storage recovery can claim and persist the slot.
+    test_preferences.clear();
+    TestController write_retry;
+    esp32_ble_tracker::ESP32BLETracker write_retry_tracker;
+    FastconLight write_retry_slot(0);
+    write_retry_slot.set_slot(1);
+    write_retry_slot.set_controller(&write_retry);
+    write_retry.register_light(&write_retry_slot);
+    prepare(write_retry, write_retry_tracker);
+    assert(write_retry.apply_mesh_key("31323334"));
+    const auto write_retry_key = write_retry.mesh_key_;
+    write_retry.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    test_storage_ok = false;
+    receive(write_retry, heartbeat(write_retry_key, 1));
+    assert(write_retry.discovery_failed_ && write_retry.discovery_.count == 0);
+    test_storage_ok = true;
+    // Model the controller's normal storage-recovery retry boundary.
+    write_retry.discovery_failed_ = false;
+    write_retry.failure_reported_ = false;
+    write_retry.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    write_retry.send_discovery_round_(); // next round resets the per-round heartbeat guard
+    receive(write_retry, heartbeat(write_retry_key, 1));
+    receive(write_retry, heartbeat(write_retry_key, 1));
+    assert(write_retry.discovery_.count == 1 && write_retry.discovery_.bulbs[0].claimed);
+    assert(write_retry_slot.get_light_id() == 1);
+    assert(pref.load(&saved) && saved.count == 1 && saved.bulbs[0].claimed);
+    for (int probe = 0; probe < 16; probe++) write_retry.finish_discovery_round_();
+    assert(write_retry.ready());
+    TestController write_retry_reboot;
+    esp32_ble_tracker::ESP32BLETracker write_retry_reboot_tracker;
+    FastconLight write_retry_reboot_slot(0);
+    write_retry_reboot_slot.set_slot(1);
+    write_retry_reboot_slot.set_controller(&write_retry_reboot);
+    write_retry_reboot.register_light(&write_retry_reboot_slot);
+    prepare(write_retry_reboot, write_retry_reboot_tracker);
+    assert(write_retry_reboot.ready() && write_retry_reboot_slot.get_light_id() == 1);
 
     // A delayed ID-2 heartbeat during probe 1 must be retained and persisted;
     // finishing the remaining probes may not leave DONE with zero claimed slots.
