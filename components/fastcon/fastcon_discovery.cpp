@@ -64,6 +64,11 @@ namespace esphome
             {
                 // A different mesh has different identities. Never bind old slots to it.
                 this->discovery_.bulbs = {};
+                this->factory_seen_ = {};
+                this->probe_next_ = {};
+                this->restored_pending_ = {};
+                this->repair_seen_ = {};
+                this->repair_attempts_ = {};
                 this->discovery_.count = 0;
                 this->discovery_.phase = DiscoveryPhase::ENUMERATE;
             }
@@ -99,6 +104,7 @@ namespace esphome
         static constexpr uint32_t SCAN_BURST_MS = 200;
         static constexpr uint32_t SCAN_REST_MS = 50;
         static constexpr uint32_t DISCOVERY_RETRY_MS = 10000;
+        static constexpr uint8_t MAX_REPAIR_ATTEMPTS = 3; // per restored bulb, per boot
 
         uint8_t FastconController::claimed_count_() const
         {
@@ -127,6 +133,8 @@ namespace esphome
             if (this->discovery_.phase == DiscoveryPhase::RECOVERY && this->discovery_.candidate >= 10000)
                 this->discovery_.phase = DiscoveryPhase::FAILED;
             this->mesh_key_ = this->discovery_.key;
+            for (uint8_t i = 0; i < this->discovery_.count; i++)
+                this->restored_pending_[i] = !this->discovery_.bulbs[i].claimed;
             this->bind_slots_();
             ESP_LOGI(TAG, "Auto-discovery: phase %u, %u saved bulbs, recovery progress %u/10000",
                      (unsigned) this->discovery_.phase, this->claimed_count_(), this->discovery_.candidate);
@@ -285,6 +293,13 @@ namespace esphome
                             bulb.mac = device.address_uint64();
                             this->confirm_bulb_(i);
                         }
+                        else if (!bulb.claimed && this->restored_pending_[i] && bulb.mac != 0 &&
+                                 bulb.mac == device.address_uint64() && this->repair_attempts_[i] < MAX_REPAIR_ATTEMPTS)
+                        {
+                            // The checksum-valid heartbeat decoded under our saved key,
+                            // but this restored identity reports a different number.
+                            this->repair_seen_[i] = true;
+                        }
                     }
                 }
             }
@@ -317,8 +332,22 @@ namespace esphome
                         if (bulb.claimed)
                             continue;
                         this->pending_index_ = (i + 1) % this->discovery_.count;
-                        if (this->factory_seen_[i])
+                        if (this->repair_seen_[i] && this->repair_attempts_[i] < MAX_REPAIR_ATTEMPTS &&
+                            !this->probe_next_[i])
                         {
+                            std::vector<uint8_t> inner(bulb.did.begin(), bulb.did.end());
+                            inner.push_back(bulb.light_id);
+                            inner.push_back(1);
+                            inner.insert(inner.end(), this->mesh_key_.begin(), this->mesh_key_.end());
+                            this->repair_attempts_[i]++;
+                            this->probe_next_[i] = true;
+                            this->discovery_adv_duration_ = std::max<uint16_t>(300, this->adv_duration_);
+                            this->queue_discovery_(DISCOVERY_QUEUE_KEY,
+                                encode_discovery_command(2, this->discovery_sequence_, inner, this->mesh_key_, this->mesh_key_[3]));
+                        }
+                        else if (this->factory_seen_[i] && !this->probe_next_[i])
+                        {
+                            this->probe_next_[i] = true;
                             std::vector<uint8_t> inner(bulb.did.begin(), bulb.did.end());
                             inner.push_back(bulb.light_id);
                             inner.push_back(1);
@@ -329,7 +358,9 @@ namespace esphome
                         }
                         else
                         {
-                            // Restored pending keying: listen under the SAVED key first.
+                            // A missed SET_KEY reply may mean the bulb already holds the
+                            // saved key. Probe it before retrying factory provisioning.
+                            this->probe_next_[i] = false;
                             this->queue_discovery_(DISCOVERY_QUEUE_KEY, this->single_control(bulb.light_id, {0xff}));
                         }
                         return;

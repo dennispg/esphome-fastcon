@@ -21,6 +21,9 @@ public:
     using FastconController::queue_;
     using FastconController::discovery_failed_;
     using FastconController::mesh_key_confirmed_;
+    using FastconController::repair_seen_;
+    using FastconController::repair_attempts_;
+    using FastconController::discovery_stopped_;
 };
 
 static std::vector<uint8_t> heartbeat(const std::array<uint8_t, 4> &key, uint8_t id)
@@ -550,6 +553,198 @@ int main()
         assert(reserved_reboot.mesh_key_ == recovered_key);
     }
 
+    // A bulb installs the first SET_KEY but drops its unsolicited confirmation.
+    // It responds only to a command addressed to its assigned ID under that key.
+    test_preferences.clear();
+    test_advertisements.clear();
+    TestController lost_confirmation;
+    esp32_ble_tracker::ESP32BLETracker lost_tracker;
+    FastconLight lost_slot(0);
+    lost_slot.set_slot(1);
+    lost_slot.set_controller(&lost_confirmation);
+    lost_confirmation.register_light(&lost_slot);
+    prepare(lost_confirmation, lost_tracker, 1, 30);
+    const auto original_key = lost_confirmation.mesh_key_;
+    bool identity_sent = false, installed = false, addressed = false;
+    uint8_t assigned = 0;
+    size_t ad_index = 0;
+    const auto lost_start = test_now;
+    for (int step = 0; step < 3000 && !lost_confirmation.ready(); step++) {
+        test_now += 10;
+        lost_confirmation.loop();
+        lost_tracker.tick(lost_confirmation);
+        while (ad_index < test_advertisements.size()) {
+            const auto &ad = test_advertisements[ad_index++];
+            assert(ad.size() == 31 && ad[3] == 27);
+            std::vector<uint8_t> rf(15, 0);
+            rf.insert(rf.end(), ad.begin() + 7, ad.end());
+            WhiteningContext ctx;
+            whitening_init(0x25, ctx);
+            whitening_encode(rf, ctx);
+            for (size_t i = 21; i < 25; i++) rf[i] ^= DEFAULT_ENCRYPT_KEY[i - 21];
+            const auto type = (rf[21] >> 4) & 7;
+            const auto &key = type == 2 ? DEFAULT_ENCRYPT_KEY : original_key;
+            for (size_t i = 25; i < 37; i++) rf[i] ^= key[(i - 25) & 3];
+            if (type == 2 && !installed) {
+                assert(std::equal(rf.begin() + 25, rf.begin() + 31, factory.begin() + 4));
+                assigned = rf[31];
+                assert(assigned == 1 && rf[32] == 1);
+                assert(std::equal(rf.begin() + 33, rf.begin() + 37, original_key.begin()));
+                installed = true;
+            } else if (type == 5 && installed && rf[25] == 0x22 && rf[26] == assigned &&
+                       rf[23] == original_key[3]) {
+                uint8_t checksum = 0;
+                for (size_t i = 21; i < 37; i++) if (i != 24) checksum += rf[i];
+                assert(checksum == rf[24]);
+                addressed = true;
+            }
+        }
+        if (lost_tracker.scanning) {
+            if (!identity_sent) {
+                receive(lost_confirmation, factory);
+                identity_sent = true;
+            } else if (addressed) {
+                receive(lost_confirmation, heartbeat(original_key, assigned));
+            }
+        }
+    }
+    assert(test_now - lost_start < 30000);
+    assert(installed && addressed && lost_confirmation.ready());
+    assert(lost_confirmation.mesh_key_ == original_key && lost_slot.get_light_id() == assigned);
+    assert(lost_confirmation.discovery_.bulbs[0].claimed);
+    assert(pref.load(&saved) && saved.key == original_key && saved.bulbs[0].light_id == assigned && saved.bulbs[0].claimed);
+
+    // A restored pending bulb identifies itself by its saved advertiser MAC but
+    // reports a different number. Only a same-key heartbeat may schedule repair.
+    test_preferences.clear();
+    TestController repair_seed;
+    esp32_ble_tracker::ESP32BLETracker repair_seed_tracker;
+    prepare(repair_seed, repair_seed_tracker, 1, 120);
+    repair_seed.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    receive(repair_seed, factory, 0x112233445566ULL);
+    const auto repair_key = repair_seed.mesh_key_;
+    TestController repair;
+    esp32_ble_tracker::ESP32BLETracker repair_tracker;
+    FastconLight repair_slot(0);
+    repair_slot.set_slot(1);
+    repair_slot.set_controller(&repair);
+    repair.register_light(&repair_slot);
+    prepare(repair, repair_tracker, 1, 120);
+    repair.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    receive(repair, heartbeat(repair_key, 7), 0x998877665544ULL);
+    receive(repair, heartbeat(app_mesh_key(1234), 7), 0x112233445566ULL);
+    auto bad_repair_heartbeat = heartbeat(repair_key, 7);
+    const uint8_t bad_safe = repair_key[3] == 0x55 ? 0x56 : 0x55;
+    const uint8_t old_sum = bad_repair_heartbeat[3] ^ DEFAULT_ENCRYPT_KEY[3];
+    bad_repair_heartbeat[2] ^= repair_key[3] ^ bad_safe;
+    bad_repair_heartbeat[3] ^= old_sum ^ static_cast<uint8_t>(old_sum - repair_key[3] + bad_safe);
+    receive(repair, bad_repair_heartbeat, 0x112233445566ULL);
+    assert(!repair.repair_seen_[0]);
+    for (int step = 0; step < 4; step++) {
+        repair.clear_queue();
+        repair.send_discovery_round_();
+        std::vector<uint8_t> rf(15, 0);
+        const auto &packet = repair.queue_.front().data;
+        rf.insert(rf.end(), packet.begin(), packet.end());
+        WhiteningContext ctx;
+        whitening_init(0x25, ctx);
+        whitening_encode(rf, ctx);
+        assert((((rf[21] ^ DEFAULT_ENCRYPT_KEY[0]) >> 4) & 7) != 2);
+    }
+    receive(repair, heartbeat(repair_key, 7), 0x112233445566ULL);
+    unsigned repair_count = 0, repair_probes = 0;
+    for (int step = 0; step < 32; step++) {
+        repair.clear_queue();
+        repair.send_discovery_round_();
+        std::vector<uint8_t> rf(15, 0);
+        const auto &packet = repair.queue_.front().data;
+        rf.insert(rf.end(), packet.begin(), packet.end());
+        WhiteningContext ctx;
+        whitening_init(0x25, ctx);
+        whitening_encode(rf, ctx);
+        const auto type = ((rf[21] ^ DEFAULT_ENCRYPT_KEY[0]) >> 4) & 7;
+        if (type == 2) {
+            repair_count++;
+            assert((rf[23] ^ DEFAULT_ENCRYPT_KEY[2]) == repair_key[3]);
+            for (size_t i = 25; i < 37; i++) rf[i] ^= repair_key[(i - 25) & 3];
+            assert(std::equal(rf.begin() + 25, rf.begin() + 31, factory.begin() + 4));
+            assert(rf[31] == 1 && rf[32] == 1);
+            assert(std::equal(rf.begin() + 33, rf.begin() + 37, repair_key.begin()));
+        } else if (type == 5) repair_probes++;
+        receive(repair, heartbeat(repair_key, 7), 0x112233445566ULL);
+    }
+    assert(repair_count == 3 && repair_probes >= 3);
+    receive(repair, heartbeat(repair_key, 1), 0x112233445566ULL);
+    assert(repair.discovery_.bulbs[0].claimed && repair_slot.get_light_id() == 1);
+    assert(pref.load(&saved) && saved.bulbs[0].claimed && saved.key == repair_key);
+
+    // Shared advertiser MAC cannot attribute a heartbeat to either DID. Both
+    // restored pending identities may be repaired, but each packet is DID-addressed
+    // and each has its own retry budget.
+    test_preferences.clear();
+    TestController shared_seed;
+    esp32_ble_tracker::ESP32BLETracker shared_seed_tracker;
+    prepare(shared_seed, shared_seed_tracker, 2, 120);
+    shared_seed.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    auto shared_second = factory;
+    shared_second[4]++;
+    constexpr uint64_t shared_mac = 0x112233445566ULL;
+    receive(shared_seed, factory, shared_mac);
+    receive(shared_seed, shared_second, shared_mac);
+    const auto shared_saved = shared_seed.discovery_;
+    assert(shared_saved.count == 2 && shared_saved.bulbs[0].light_id == 1 &&
+           shared_saved.bulbs[1].light_id == 2);
+    TestController shared_repair;
+    esp32_ble_tracker::ESP32BLETracker shared_repair_tracker;
+    prepare(shared_repair, shared_repair_tracker, 2, 120);
+    shared_repair.loop(); // initialize the factory timeout
+    shared_repair.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    receive(shared_repair, heartbeat(shared_saved.key, 7), shared_mac);
+    assert(shared_repair.repair_seen_[0] && shared_repair.repair_seen_[1]);
+    unsigned attempts[2] = {}, probes_after_budget[2] = {};
+    for (int step = 0; step < 64; step++) {
+        shared_repair.clear_queue();
+        shared_repair.send_discovery_round_();
+        assert(shared_repair.queue_.size() == 1);
+        std::vector<uint8_t> rf(15, 0);
+        const auto &packet = shared_repair.queue_.front().data;
+        rf.insert(rf.end(), packet.begin(), packet.end());
+        WhiteningContext ctx;
+        whitening_init(0x25, ctx);
+        whitening_encode(rf, ctx);
+        for (size_t i = 21; i < 25; i++) rf[i] ^= DEFAULT_ENCRYPT_KEY[i - 21];
+        const auto type = (rf[21] >> 4) & 7;
+        if (type == 2 || type == 5) {
+            for (size_t i = 25; i < 37; i++) rf[i] ^= shared_saved.key[(i - 25) & 3];
+            if (type == 2) {
+                const auto id = rf[31];
+                assert(id >= 1 && id <= 2 && rf[32] == 1 && rf[23] == shared_saved.key[3]);
+                assert(std::equal(rf.begin() + 25, rf.begin() + 31, shared_saved.bulbs[id - 1].did.begin()));
+                assert(std::equal(rf.begin() + 33, rf.begin() + 37, shared_saved.key.begin()));
+                assert(++attempts[id - 1] <= 3);
+            } else {
+                assert(rf[25] == 0x22 && rf[26] >= 1 && rf[26] <= 2);
+                if (attempts[rf[26] - 1] == 3) probes_after_budget[rf[26] - 1]++;
+            }
+        }
+        receive(shared_repair, heartbeat(shared_saved.key, 7), shared_mac);
+    }
+    assert(attempts[0] == 3 && attempts[1] == 3);
+    assert(shared_repair.repair_attempts_[0] == 3 && shared_repair.repair_attempts_[1] == 3);
+    assert(probes_after_budget[0] > 0 && probes_after_budget[1] > 0);
+    assert(shared_repair.mesh_key_ == shared_saved.key && shared_repair.discovery_.count == 2);
+    for (int i = 0; i < 2; i++) {
+        const auto &bulb = shared_repair.discovery_.bulbs[i];
+        assert(!bulb.claimed && bulb.did == shared_saved.bulbs[i].did &&
+               bulb.light_id == shared_saved.bulbs[i].light_id && bulb.mac == shared_mac);
+    }
+    shared_repair.clear_queue();
+    shared_repair.discovery_io_ = TestController::DiscoveryIO::REST;
+    test_now += 121000;
+    shared_repair.loop();
+    assert(shared_repair.discovery_stopped_);
+    assert(pref.load(&saved) && saved.count == 2 && !saved.bulbs[0].claimed && !saved.bulbs[1].claimed);
+
     // The primary four-bulb case: one controller key, four distinct identities
     // and four unique numbers, even if the advertiser address is reused/changes.
     test_preferences.clear();
@@ -596,6 +791,31 @@ int main()
         keyed_ids |= 1 << (id - 1);
     }
     assert(keyed_ids == 0x0f); // per-bulb MAC + number, one shared new key
+    // Each of four pending identities alternates independently; a global toggle
+    // would starve some bulbs when round-robin cardinality is even.
+    unsigned probed_ids = 0, retried_ids = 0;
+    for (int step = 0; step < 16; step++) {
+        four.clear_queue();
+        four.send_discovery_round_();
+        std::vector<uint8_t> rf(15, 0);
+        const auto &packet = four.queue_.front().data;
+        rf.insert(rf.end(), packet.begin(), packet.end());
+        WhiteningContext ctx;
+        whitening_init(0x25, ctx);
+        whitening_encode(rf, ctx);
+        const auto type = ((rf[21] ^ DEFAULT_ENCRYPT_KEY[0]) >> 4) & 7;
+        if (type == 2) {
+            const auto id = rf[31] ^ DEFAULT_ENCRYPT_KEY[2];
+            assert(id >= 1 && id <= 4);
+            retried_ids |= 1 << (id - 1);
+        } else if (type == 5) {
+            assert((rf[25] ^ shared_key[0]) == 0x22);
+            const auto id = rf[26] ^ shared_key[1];
+            assert(id >= 1 && id <= 4);
+            probed_ids |= 1 << (id - 1);
+        }
+    }
+    assert(probed_ids == 0x0f && retried_ids == 0x0f);
     four.clear_queue();
     for (uint8_t i = 0; i < 4; i++) {
         assert(four.discovery_.bulbs[i].light_id == i + 1);

@@ -41,6 +41,11 @@ int main()
     full_heartbeat.insert(full_heartbeat.begin(), {0xf0, 0xff});
     assert(decode_heartbeat(full_heartbeat, key, id) && id == 2);
     assert(!decode_heartbeat(heartbeat, app_mesh_key(1235), id));
+    // Keep the checksum valid while byte 2 matches neither key[3] nor the ID.
+    auto bad_safe_key = heartbeat;
+    bad_safe_key[2] ^= 0x34 ^ 0x55;
+    bad_safe_key[3] ^= sum ^ static_cast<uint8_t>(sum - 0x34 + 0x55);
+    assert(!decode_heartbeat(bad_safe_key, key, id));
     heartbeat[3] ^= 1;
     assert(!decode_heartbeat(heartbeat, key, id));
     heartbeat[3] ^= 1;

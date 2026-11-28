@@ -155,6 +155,10 @@ namespace esphome
             bool recovery_wake_sent_{false};
             uint8_t pending_index_{0};
             std::array<bool, 16> factory_seen_{};
+            std::array<bool, 16> probe_next_{}; // alternate per pending identity
+            std::array<bool, 16> restored_pending_{};
+            std::array<bool, 16> repair_seen_{};
+            std::array<uint8_t, 16> repair_attempts_{};
             bool scan_started_{false};
             uint32_t scan_started_at_{0};
             uint32_t scan_ended_at_{0};
