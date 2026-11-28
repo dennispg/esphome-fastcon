@@ -1,0 +1,66 @@
+# Flash this file from a checkout of the component. Adjust the board and Wi-Fi
+# secrets first; keep normal API encryption/OTA credentials used on the network.
+esphome:
+  name: fastcon-lights
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  level: INFO
+
+api:
+  actions:
+    - action: set_fastcon_mesh_key
+      variables:
+        mesh_key: string
+      then:
+        - fastcon.set_mesh_key:
+            mesh_key: !lambda 'return mesh_key;'
+
+ota:
+  - platform: esphome
+
+esp32_ble_server:
+esp32_ble_tracker:
+  scan_parameters:
+    continuous: false
+    active: false
+    duration: 1s
+    interval: 50ms
+    window: 25ms
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+fastcon:
+  mesh_key: auto
+  discovery:
+    max_lights: 4
+    scan_timeout_s: 30
+
+light:
+  - platform: fastcon
+    name: "Fastcon 1"
+    slot: 1
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "Fastcon 2"
+    slot: 2
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "Fastcon 3"
+    slot: 3
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "Fastcon 4"
+    slot: 4
+    default_transition_length: 0s

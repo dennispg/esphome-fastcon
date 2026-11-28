@@ -1,0 +1,48 @@
+# Compile-only discovery and runtime-action coverage.
+esphome:
+  name: fastcon-discovery-esp-idf
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+logger:
+esp32_ble_server:
+esp32_ble_tracker:
+  scan_parameters:
+    continuous: false
+    active: false
+    duration: 1s
+    interval: 50ms
+    window: 25ms
+external_components:
+  - source:
+      type: local
+      path: ../components
+fastcon:
+  mesh_key: auto
+  discovery:
+    max_lights: 4
+    scan_timeout_s: 30
+light:
+  - platform: fastcon
+    name: "Fastcon 1"
+    slot: 1
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "Fastcon 2"
+    slot: 2
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "Fastcon 3"
+    slot: 3
+    default_transition_length: 0s
+  - platform: fastcon
+    name: "Fastcon 4"
+    slot: 4
+    default_transition_length: 0s
+button:
+  - platform: template
+    name: Apply fallback key
+    on_press:
+      - fastcon.set_mesh_key:
+          mesh_key: "31323334"
