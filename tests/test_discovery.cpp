@@ -20,6 +20,7 @@ public:
     using FastconController::save_discovery_;
     using FastconController::queue_;
     using FastconController::discovery_failed_;
+    using FastconController::mesh_key_confirmed_;
 };
 
 static std::vector<uint8_t> heartbeat(const std::array<uint8_t, 4> &key, uint8_t id)
@@ -63,10 +64,11 @@ static void round(TestController &controller, esp32_ble_tracker::ESP32BLETracker
     assert(false && "nonblocking scan round did not finish");
 }
 
-static void prepare(TestController &controller, esp32_ble_tracker::ESP32BLETracker &tracker, uint8_t max = 4)
+static void prepare(TestController &controller, esp32_ble_tracker::ESP32BLETracker &tracker, uint8_t max = 4,
+                    uint32_t timeout = 30)
 {
     controller.set_preference_key(1);
-    controller.set_discovery(&tracker, max, 30);
+    controller.set_discovery(&tracker, max, timeout);
     controller.setup();
 }
 
@@ -144,13 +146,21 @@ int main()
     assert(restored.save_discovery_());
     TestController pending;
     esp32_ble_tracker::ESP32BLETracker pending_tracker;
-    prepare(pending, pending_tracker, 4);
-    pending.set_discovery(&pending_tracker, 4, 2);
+    prepare(pending, pending_tracker, 4, 120);
     assert(pending.mesh_key_ == key && pending.discovery_.count == 1);
+    assert(!pending.discovery_.bulbs[0].claimed && !pending.mesh_key_confirmed_);
+    // A late boot-window identity must renew the deadline before it expires.
+    pending.loop(); // Initialize the radio deadline before advancing simulated time.
+    test_now += 119000;
+    round(pending, pending_tracker, factory);
+    test_now += 2000; // Past the original deadline, but within the renewed window.
+    pending.finish_discovery_round_();
+    assert(!pending.discovery_failed_ && !pending.discovery_.bulbs[0].claimed);
 
-    for (int step = 0; step < 6 && !pending.ready(); step++)
+    for (int step = 0; step < 6 && !pending.discovery_.bulbs[0].claimed; step++)
         round(pending, pending_tracker, heartbeat(key, 2));
-    assert(pending.discovery_.bulbs[0].claimed && pending.ready());
+    assert(pending.discovery_.bulbs[0].claimed);
+    assert(pending.mesh_key_confirmed_);
 
     // Partial factory confirmation remains resumable after timeout and reboot.
     test_preferences.clear();

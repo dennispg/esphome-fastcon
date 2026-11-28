@@ -178,6 +178,7 @@ namespace esphome
                 this->discovery_failed_ = true;
                 return;
             }
+            this->mesh_key_confirmed_ = true;
             ESP_LOGI(TAG, "Discovered light_id=%u mesh_key=%02X%02X%02X%02X", bulb.light_id,
                      this->mesh_key_[0], this->mesh_key_[1], this->mesh_key_[2], this->mesh_key_[3]);
             this->bind_slots_();
@@ -199,6 +200,8 @@ namespace esphome
                     decode_factory_identity(frame, did))
                 {
                     handled = true;
+                    if (this->discovery_.phase == DiscoveryPhase::FACTORY)
+                        this->discovery_started_ = millis();
                     if (this->discovery_.phase == DiscoveryPhase::RECOVERY)
                     {
                         // A boot-window identity always preempts the slow app-key search.
