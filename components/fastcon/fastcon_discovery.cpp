@@ -265,8 +265,12 @@ namespace esphome
                     // Any valid keyed heartbeat proves mesh membership, even if an
                     // explicit entity reserves the address or no slot can bind it.
                     this->mesh_key_confirmed_ = true;
-                    if (id != this->probe_id_)
+                    // Keep the old handling for invalid addresses; only delayed
+                    // in-range probe IDs are eligible for retention.
+                    if (id != this->probe_id_ && (id == 0 || id > 16))
                         continue;
+                    // A keyed heartbeat can be delayed from an earlier probe. Its
+                    // address is still authoritative; retain any eligible ID now.
                     bool known = false;
                     for (uint8_t i = 0; i < this->discovery_.count; i++)
                         known |= this->discovery_.bulbs[i].light_id == id;

@@ -548,6 +548,35 @@ int main()
         assert(reserved_reboot.mesh_key_ == recovered_key);
     }
 
+    // A delayed ID-2 heartbeat during probe 1 must be retained and persisted;
+    // finishing the remaining probes may not leave DONE with zero claimed slots.
+    test_preferences.clear();
+    TestController delayed_id;
+    esp32_ble_tracker::ESP32BLETracker delayed_id_tracker;
+    FastconLight delayed_slot(0);
+    delayed_slot.set_slot(1);
+    delayed_slot.set_controller(&delayed_id);
+    delayed_id.register_light(&delayed_slot);
+    prepare(delayed_id, delayed_id_tracker);
+    assert(delayed_id.apply_mesh_key("31323334"));
+    delayed_id.discovery_io_ = TestController::DiscoveryIO::SCAN;
+    delayed_id.probe_id_ = 1;
+    receive(delayed_id, heartbeat(delayed_id.mesh_key_, 2));
+    assert(delayed_id.discovery_.count == 1 && delayed_id.discovery_.bulbs[0].light_id == 2);
+    assert(delayed_id.discovery_.bulbs[0].claimed && delayed_slot.get_light_id() == 2);
+    assert(pref.load(&saved) && saved.bulbs[0].light_id == 2 && saved.bulbs[0].claimed);
+    for (int probe = 0; probe < 16; probe++) delayed_id.finish_discovery_round_();
+    assert(delayed_id.discovery_.phase == DiscoveryPhase::DONE);
+    assert(delayed_slot.get_light_id() == 2);
+    TestController delayed_reboot;
+    esp32_ble_tracker::ESP32BLETracker delayed_reboot_tracker;
+    FastconLight delayed_reboot_slot(0);
+    delayed_reboot_slot.set_slot(1);
+    delayed_reboot_slot.set_controller(&delayed_reboot);
+    delayed_reboot.register_light(&delayed_reboot_slot);
+    prepare(delayed_reboot, delayed_reboot_tracker);
+    assert(delayed_reboot.ready() && delayed_reboot_slot.get_light_id() == 2);
+
     // A bulb installs the first SET_KEY but drops its unsolicited confirmation.
     // It responds only to a command addressed to its assigned ID under that key.
     test_preferences.clear();
