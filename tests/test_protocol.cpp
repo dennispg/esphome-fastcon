@@ -47,6 +47,14 @@ int main()
     heartbeat.resize(15);
     assert(!decode_heartbeat(heartbeat, key, id));
 
+    // Captured flood-light layout: byte 2 contains the light number, not key[3].
+    std::vector<uint8_t> flood_heartbeat{0x30, 0x80, 0x02, 0x7e, 0x74, 0x02, 0x00, 0x04,
+                                         0x04, 0x35, 0x0a, 0x0f, 0, 0, 0, 0};
+    for (size_t i = 0; i < flood_heartbeat.size(); i++)
+        flood_heartbeat[i] ^= i < 4 ? DEFAULT_ENCRYPT_KEY[i] : key[(i - 4) & 3];
+    assert(decode_heartbeat(flood_heartbeat, key, id) && id == 2);
+    assert(!decode_heartbeat(flood_heartbeat, app_mesh_key(1235), id));
+
     // Framing must reuse the existing RF/CRC/whitening codec.
     std::vector<uint8_t> body{0x20, 1, 0xc4, 0};
     std::vector<uint8_t> data{0xe8, 0x70, 0x72, 0xf2, 0xe7, 0x70, 1, 1, 0x31, 0x32, 0x33, 0x34};

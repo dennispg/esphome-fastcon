@@ -90,7 +90,10 @@ namespace esphome
             const uint8_t type = (body[0] >> 4) & 7;
             // Both heartbeat type variants occur in community decoders. Never accept
             // a relayed control command (payload opcode 2/3) as proof of a bulb.
-            if ((type != 3 && type != 5) || (body[0] & 0x0f) != 0 || body[2] != key[3] ||
+            // Captured flood lights place the light number in byte 2. The 8-bit
+            // checksum and type/nibble checks guard false positives; accidental recovery
+            // matches are re-probed in ENUMERATE (IDs 1..16) before recovery resumes.
+            if ((type != 3 && type != 5) || (body[0] & 0x0f) != 0 ||
                 (body[4] & 0x0f) != 4 || body[5] == 0)
                 return false;
             uint8_t checksum = 0;
